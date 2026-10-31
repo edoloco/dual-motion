@@ -8,10 +8,11 @@ import org.json.JSONObject;
  * Viaja al extendido como {t:"moState", …}.
  */
 public final class State {
-    public static final int SEL = 0, SUB = 1, PEN = 2, LINE = 3, RECT = 4, OVAL = 5, PENCIL = 6, BRUSH = 7,
-            BUCKET = 8, INK = 9, DROPPER = 10, ERASER = 11, HAND = 12;
-    public static final String[] NAMES = {"Selección", "Subselección", "Pluma", "Línea", "Rectángulo", "Óvalo",
-            "Lápiz", "Pincel", "Cubo de pintura", "Bote de tinta", "Cuentagotas", "Borrador", "Mano"};
+    public static final int SEL = 0, SUB = 1, FREE = 2, PEN = 3, LINE = 4, RECT = 5, OVAL = 6, PENCIL = 7,
+            BRUSH = 8, BUCKET = 9, INK = 10, DROPPER = 11, ERASER = 12, HAND = 13;
+    public static final String[] NAMES = {"Selección", "Subselección", "Transformación libre", "Pluma", "Línea",
+            "Rectángulo", "Óvalo", "Lápiz", "Pincel", "Cubo de pintura", "Bote de tinta", "Cuentagotas", "Borrador",
+            "Mano"};
     public static final int TOOLS = NAMES.length;
 
     public int tool = PENCIL;

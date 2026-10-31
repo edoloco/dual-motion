@@ -34,8 +34,14 @@ Las dos pantallas son UNA: lo repartido se comporta como un solo elemento.
 - `MDoc` — el documento: capas (0 = la de arriba) × fotogramas clave (`TreeMap`), formas `Shape` (nodos Bézier:
   x, y, manilla de entrada, manilla de salida), largo por capa (`len`). Órdenes `apply({op…})` y deshacer
   (cada paso guarda la capa tocada o el documento entero).
-- `Render` — dibuja formas, fotogramas y papel cebolla; toques sobre formas (`hit`); suaviza trazos a mano alzada.
-- `StageView` — la mesa: herramientas, zoom/encuadre con dos dedos, selección, subselección, pluma.
+  Cada `Key` es como una instancia: sus formas se mueven juntas con `tx, ty, sx, sy, rot, alpha` alrededor de
+  `px, py`. `tween` = interpolación de movimiento hasta el clave siguiente, con curva `ease` (Bézier de (0,0) a
+  (1,1), puntos x1,y1,x2,y2) y `spin` giros extra. `MDoc.pose(L, f)` da lo que se ve en f (ya interpolado).
+- `Files` — `.dmo` = ZIP con `documento.json` + `dmo.txt`; Guardar / Guardar como / Abrir con el selector de
+  archivos de Android (SAF, permiso persistente; prefs `docUri`, `docName`). Al abrir se manda la orden `load`.
+- `Render` — dibuja formas, capas con su pose (`Render.layer/pose/matrix`), fotogramas y papel cebolla; toques sobre formas (`hit`); suaviza trazos a mano alzada.
+- `StageView` — la mesa: herramientas, zoom/encuadre con dos dedos, selección, subselección, pluma,
+  transformación libre. Las herramientas de dibujo trabajan en coordenadas propias del clave (deshacen su pose).
 - `TimelineView` — línea de tiempo dibujada a mano (nombres con ojo/candado/contorno, grilla, cabezal rojo).
 - `State` — herramienta, colores, grosor, capa y fotograma actuales, papel cebolla (lo decide el principal).
 - `Net` — conexión TCP por WiFi (puerto 47830) con anuncio UDP (47831); una sola fila de envío; latido cada 3 s.
@@ -54,12 +60,16 @@ Las dos pantallas son UNA: lo repartido se comporta como un solo elemento.
 ### Órdenes del documento
 `add {l,f,s}`, `set {l,f,is,ss}`, `del {l,f,is}`, `order {l,f,is,to}`, `key {l,f,blank?}` (F6/F7),
 `frame {l,f}` (F5), `delFrame {l,f}`, `clearKey {l,f}`, `layer {l,name?,vis?,lock?,out?}`, `layerAdd {at}`,
-`layerDel {l}`, `layerMove {l,to}`, `fps {v}`, `new`, `load {doc}`, `undo`, `redo`.
+`layerDel {l}`, `layerMove {l,to}`, `fps {v}`, `new`, `load {doc}`, `undo`, `redo`,
+`xf {l,f,x?,y?,sx?,sy?,r?,a?,px?,py?}` (pose del clave), `tween {l,f,on}`, `ease {l,f,c:[x1,y1,x2,y2]}`, `spin {l,f,n}`.
 Dibujar en un fotograma después del final de la capa crea ahí un clave vacío (como en Flash).
+`tween` sin clave final crea uno al final del tramo (o 1 s después). `xf` o F6 en medio de una interpolación crean
+ahí un clave con la pose interpolada.
 
 ## Herramientas (etapa 1)
 
-Selección (mover, marco), Subselección (nodos y manillas), Pluma (tocar = recto, arrastrar = curva, primer punto
+Selección (mover, marco), Subselección (nodos y manillas), Transformación libre (todo el clave: dentro = mover,
+manillas = escalar, por fuera de las esquinas = girar; escala y giro alrededor del centro), Pluma (tocar = recto, arrastrar = curva, primer punto
 = cerrar, último punto o "✓ Terminar" = terminar), Línea, Rectángulo, Óvalo, Lápiz, Pincel (usa el color de
 relleno), Cubo de pintura, Bote de tinta, Cuentagotas, Borrador (borra formas enteras), Mano.
 
@@ -67,7 +77,8 @@ relleno), Cubo de pintura, Bote de tinta, Cuentagotas, Borrador (borra formas en
 
 1. ✅ Base: papeles, documento capas × claves, dibujo vectorial, línea de tiempo con cabezal, reproducir
    sincronizado, papel cebolla, vista previa a pantalla completa en el principal, guardado automático.
-2. Animación clásica: interpolación de movimiento con aceleración (curva), guardar/abrir `.dmo` (ZIP con JSON).
+2. ✅ Animación clásica: interpolación de movimiento (posición, escala, giro, alfa) con curva de aceleración y
+   giros; transformación libre; guardar/abrir `.dmo`.
 3. Símbolos: biblioteca, gráfico, clip de película, botón; instancias; editar en el lugar.
 4. Interpolación de forma, guía de movimiento, máscara, filtros, mezcla; operaciones entre trazados.
 5. Publicar: MP4 (`MediaCodec`), GIF, secuencia PNG; capa de sonido.

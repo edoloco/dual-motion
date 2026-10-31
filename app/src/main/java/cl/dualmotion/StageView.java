@@ -3,6 +3,7 @@ package cl.dualmotion;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.DashPathEffect;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.view.MotionEvent;
@@ -212,25 +213,65 @@ public final class StageView extends View {
         for (int i = d.layers.size() - 1; i >= 0; i--) {
             MDoc.Layer L = d.layers.get(i);
             if (!L.vis) continue;
-            MDoc.Key k = MDoc.keyAt(L, f);
-            if (k == null) continue;
+            MDoc.Pose ps = i == st.layer && !playing ? curPose() : MDoc.pose(L, f);
+            if (ps == null) continue;
             int outline = L.out ? L.color : 0;
-            if (i != st.layer || playing) { Render.key(c, k, 0, outline, 1.5f * hair); continue; }
+            if (i != st.layer || playing) { Render.pose(c, ps, 0, outline, 1.5f * hair); continue; }
+            MDoc.Key k = ps.key;
+            int save = ps.alpha < 1 && outline == 0 ? c.saveLayerAlpha(null, Math.round(ps.alpha * 255)) : c.save();
+            c.concat(Render.matrix(ps, mtx));
+            float lh = 1.5f * hair / poseScale(ps);
             for (int j = 0; j < k.shapes.size(); j++) {
                 MDoc.Shape sh = k.shapes.get(j);
                 if (j == subIdx && subCopy != null) sh = subCopy;
                 boolean mv = moving && sel.contains(j);
-                if (erasing.contains(j)) { c.saveLayerAlpha(null, 0x40); Render.shape(c, sh, 0, outline, 1.5f * hair); c.restore(); continue; }
+                if (erasing.contains(j)) { c.saveLayerAlpha(null, 0x40); Render.shape(c, sh, 0, outline, lh); c.restore(); continue; }
                 if (mv) { c.save(); c.translate(mdx, mdy); }
-                Render.shape(c, sh, 0, outline, 1.5f * hair);
+                Render.shape(c, sh, 0, outline, lh);
                 if (mv) c.restore();
             }
+            c.restoreToCount(save);
         }
 
-        if (!playing) drawOverlay(c, d, st, hair);
+        if (!playing) {
+            // lo que se dibuja sobre la capa actual va en sus coordenadas (con su transformación)
+            MDoc.Pose cp = curPose();
+            c.save();
+            if (cp != null) c.concat(Render.matrix(cp, mtx));
+            drawOverlay(c, d, st, hair / poseScale(cp));
+            c.restore();
+            if (st.tool == State.FREE) drawFreeBox(c, hair);
+        }
         c.restore();
 
         drawChips(c, playing);
+    }
+
+    private final Matrix mtx = new Matrix(), inv = new Matrix();
+    private final float[] pt = new float[2];
+
+    /** Pose de la capa actual en el fotograma que se ve (o la que se está transformando). */
+    private MDoc.Pose curPose() {
+        if (xfPose != null) return xfPose;
+        MDoc.Layer L = curLayer();
+        return L == null ? null : MDoc.pose(L, host.shownFrame());
+    }
+
+    private static float poseScale(MDoc.Pose p) {
+        return p == null ? 1 : Math.max(0.01f, (Math.abs(p.sx) + Math.abs(p.sy)) / 2);
+    }
+
+    /** Punto del documento → coordenadas propias de la capa actual (deshace su transformación). */
+    private void prepareLocal() {
+        MDoc.Pose p = curPose();
+        if (p == null) inv.reset();
+        else Render.matrix(p, mtx).invert(inv);
+    }
+
+    private float[] local(float x, float y) {
+        pt[0] = x; pt[1] = y;
+        inv.mapPoints(pt);
+        return pt;
     }
 
     private void drawOverlay(Canvas c, MDoc d, State st, float hair) {
@@ -362,15 +403,20 @@ public final class StageView extends View {
             gesture = true;
             blocked = false;
             lsx = x; lsy = y;
-            down(dx(x), dy(y));
+            if (host.st().tool == State.FREE) { freeDown(dx(x), dy(y)); invalidate(); return true; }
+            prepareLocal();
+            float[] q = local(dx(x), dy(y));
+            down(q[0], q[1]);
         } else if (!gesture) {
             return true;
         } else if (a == MotionEvent.ACTION_MOVE) {
-            move(dx(x), dy(y), x, y);
+            if (host.st().tool == State.FREE) freeMove(dx(x), dy(y));
+            else { float[] q = local(dx(x), dy(y)); move(q[0], q[1], x, y); }
             lsx = x; lsy = y;
         } else if (a == MotionEvent.ACTION_UP) {
             gesture = false;
-            up(dx(x), dy(y));
+            if (host.st().tool == State.FREE) freeUp();
+            else { float[] q = local(dx(x), dy(y)); up(q[0], q[1]); }
         } else if (a == MotionEvent.ACTION_CANCEL) {
             cancelGesture();
         }
@@ -405,6 +451,7 @@ public final class StageView extends View {
         temp = null; pts = null;
         erasing.clear();
         subCopy = null; subNode = -1;
+        xfPose = null; xfMode = 0;
         if (pen != null && penNew && !pen.isEmpty()) pen.remove(pen.size() - 1);
         penNew = penClosing = penFinishing = false;
         invalidate();
@@ -742,4 +789,132 @@ public final class StageView extends View {
         if (subCopy != null && subNode >= 0 && dragged) one(subIdx, subCopy);
         subCopy = null; subNode = -1;
     }
+
+    // ---------------------------------------------------------------- transformación libre (todo el clave)
+    // Dentro del cuadro = mover; manillas de las esquinas = escalar; de los lados = escalar en un sentido;
+    // un poco por fuera de las esquinas = girar. Escala y giro son alrededor del centro.
+    private MDoc.Pose xfPose, xf0;
+    private int xfMode; // 1 mover, 2 girar, 3 escalar
+    private int xfHx, xfHy;
+    private float xfSx, xfSy, xfA0, xfVx, xfVy;
+    private final RectF lb = new RectF();
+
+    /** Rectángulo (en coordenadas propias) que ocupan las formas del clave. */
+    private boolean localBounds(MDoc.Key k, RectF out) {
+        out.setEmpty();
+        boolean any = false;
+        for (MDoc.Shape sh : k.shapes) {
+            if (!any) { out.set(Render.bounds(sh)); any = true; } else out.union(Render.bounds(sh));
+        }
+        return any;
+    }
+
+    private float[] corners(MDoc.Pose p, RectF b) {
+        float[] q = {b.left, b.top, b.centerX(), b.top, b.right, b.top, b.right, b.centerY(),
+                b.right, b.bottom, b.centerX(), b.bottom, b.left, b.bottom, b.left, b.centerY()};
+        Render.matrix(p, mtx).mapPoints(q);
+        return q;
+    }
+
+    private static final int[][] HANDLE = {{-1, -1}, {0, -1}, {1, -1}, {1, 0}, {1, 1}, {0, 1}, {-1, 1}, {-1, 0}};
+
+    private static MDoc.Pose copyPose(MDoc.Pose a) {
+        MDoc.Pose p = new MDoc.Pose();
+        p.key = a.key; p.keyFrame = a.keyFrame; p.tweening = a.tweening;
+        p.tx = a.tx; p.ty = a.ty; p.sx = a.sx; p.sy = a.sy; p.rot = a.rot; p.alpha = a.alpha; p.px = a.px; p.py = a.py;
+        return p;
+    }
+
+    private void freeDown(float x, float y) {
+        sx = x; sy = y; dragged = false; xfMode = 0;
+        MDoc.Layer L = curLayer();
+        MDoc.Pose p = L == null ? null : MDoc.pose(L, host.st().frame);
+        if (p == null || !localBounds(p.key, lb)) { Ui.toast(getContext(), "No hay nada que transformar en este fotograma"); return; }
+        if (!editable()) return;
+        xf0 = copyPose(p);
+        // sin giro ni escala, el centro se puede cambiar sin mover nada: se usa el centro del dibujo
+        if (xf0.sx == 1 && xf0.sy == 1 && xf0.rot == 0) { xf0.px = lb.centerX(); xf0.py = lb.centerY(); }
+        float[] q = corners(xf0, lb);
+        float t = tol();
+        for (int i = 0; i < 8; i++) {
+            if (Math.hypot(x - q[i * 2], y - q[i * 2 + 1]) < t) { xfMode = 3; xfHx = HANDLE[i][0]; xfHy = HANDLE[i][1]; break; }
+        }
+        Render.matrix(xf0, mtx).invert(inv);
+        float[] lp = local(x, y);
+        boolean inside = lb.contains(lp[0], lp[1]);
+        if (xfMode == 0 && !inside) {
+            for (int i = 0; i < 8; i += 2)
+                if (Math.hypot(x - q[i * 2], y - q[i * 2 + 1]) < t * 3.5f) { xfMode = 2; break; }
+        }
+        if (xfMode == 0 && inside) xfMode = 1;
+        if (xfMode == 0) return;
+        float cx0 = xf0.px + xf0.tx, cy0 = xf0.py + xf0.ty;
+        xfA0 = (float) Math.atan2(y - cy0, x - cx0);
+        float[] v = unrot(x - cx0, y - cy0, xf0.rot);
+        xfVx = v[0]; xfVy = v[1]; xfSx = xf0.sx; xfSy = xf0.sy;
+        xfPose = copyPose(xf0);
+    }
+
+    private static float[] unrot(float vx, float vy, float deg) {
+        double a = Math.toRadians(-deg);
+        float c = (float) Math.cos(a), s = (float) Math.sin(a);
+        return new float[]{vx * c - vy * s, vx * s + vy * c};
+    }
+
+    private void freeMove(float x, float y) {
+        if (xfPose == null) return;
+        if (Math.hypot((x - sx) * s, (y - sy) * s) > 4 * dp) dragged = true;
+        float cx0 = xf0.px + xf0.tx, cy0 = xf0.py + xf0.ty;
+        if (xfMode == 1) { xfPose.tx = xf0.tx + x - sx; xfPose.ty = xf0.ty + y - sy; }
+        else if (xfMode == 2) {
+            float a = (float) Math.atan2(y - cy0, x - cx0);
+            xfPose.rot = xf0.rot + (float) Math.toDegrees(a - xfA0);
+        } else if (xfMode == 3) {
+            float[] v = unrot(x - cx0, y - cy0, xf0.rot);
+            if (xfHx != 0 && Math.abs(xfVx) > 1e-3f) xfPose.sx = xfSx * v[0] / xfVx;
+            if (xfHy != 0 && Math.abs(xfVy) > 1e-3f) xfPose.sy = xfSy * v[1] / xfVy;
+            if (Math.abs(xfPose.sx) < 0.02f) xfPose.sx = Math.copySign(0.02f, xfPose.sx);
+            if (Math.abs(xfPose.sy) < 0.02f) xfPose.sy = Math.copySign(0.02f, xfPose.sy);
+        }
+    }
+
+    private void freeUp() {
+        MDoc.Pose p = xfPose;
+        xfPose = null;
+        int mode = xfMode;
+        xfMode = 0;
+        if (p == null || mode == 0 || !dragged) { invalidate(); return; }
+        JSONObject o = op("xf");
+        try {
+            o.put("x", (double) p.tx); o.put("y", (double) p.ty); o.put("sx", (double) p.sx); o.put("sy", (double) p.sy);
+            o.put("r", (double) p.rot); o.put("px", (double) p.px); o.put("py", (double) p.py);
+        } catch (JSONException ignored) { }
+        host.submit(o);
+    }
+
+    private void drawFreeBox(Canvas c, float hair) {
+        MDoc.Pose p = curPose();
+        if (p == null || !localBounds(p.key, lb)) return;
+        float[] q = corners(p, lb);
+        p(Paint.Style.STROKE, Ui.BLUE, 1.5f * hair);
+        android.graphics.Path box = new android.graphics.Path();
+        box.moveTo(q[0], q[1]); box.lineTo(q[4], q[5]); box.lineTo(q[8], q[9]); box.lineTo(q[12], q[13]); box.close();
+        c.drawPath(box, this.p);
+        float r = 4.5f * dp * hair;
+        for (int i = 0; i < 8; i++) {
+            p(Paint.Style.FILL, 0xFFFFFFFF, hair);
+            c.drawRect(q[i * 2] - r, q[i * 2 + 1] - r, q[i * 2] + r, q[i * 2 + 1] + r, this.p);
+            p(Paint.Style.STROKE, Ui.BLUE, 1.2f * hair);
+            c.drawRect(q[i * 2] - r, q[i * 2 + 1] - r, q[i * 2] + r, q[i * 2 + 1] + r, this.p);
+        }
+        // centro de giro
+        float cx0 = p.px + p.tx, cy0 = p.py + p.ty;
+        if (p.sx == 1 && p.sy == 1 && p.rot == 0) { cx0 = lb.centerX() + p.tx; cy0 = lb.centerY() + p.ty; }
+        p(Paint.Style.FILL, 0xFFFFFFFF, hair);
+        c.drawCircle(cx0, cy0, r, this.p);
+        p(Paint.Style.STROKE, Ui.INK, 1.2f * hair);
+        c.drawCircle(cx0, cy0, r, this.p);
+    }
+
+    private void p(Paint.Style st, int color, float w) { p.setStyle(st); p.setColor(color); p.setStrokeWidth(w); }
 }
