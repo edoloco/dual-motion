@@ -45,6 +45,17 @@ Las dos pantallas son UNA: lo repartido se comporta como un solo elemento.
 - `TimelineView` — línea de tiempo dibujada a mano (nombres con ojo/candado/contorno, grilla, cabezal rojo).
 - `State` — herramienta, colores, grosor, capa y fotograma actuales, papel cebolla (lo decide el principal).
 - `Net` — conexión TCP por WiFi (puerto 47830) con anuncio UDP (47831); una sola fila de envío; latido cada 3 s.
+- `LinkService` — servicio en primer plano (tipo connectedDevice) dueño de `Net`, para que la conexión siga viva
+  con la pantalla en segundo plano. Atiende él mismo `moShow` (extendido: trae la mesa al frente), `moUpdate`,
+  `moSnd`/`moSndReq`; lo demás va a la pantalla abierta (`attach`). `startOrNotify`: abre una pantalla desde
+  segundo plano si hay permiso "mostrar sobre otras apps" (se pide en el extendido); si no, deja un aviso.
+- `Updater` — como en ChronOS: Releases de `edoloco/dual-motion`, descarga `DualMotion.apk`, `PackageInstaller`.
+  "Actualizar los dos" manda `moUpdate`; el otro descarga e instala solo y responde con `moMsg`.
+- `Sounds` — sonidos: original en `files/sonidos/id.ext`, PCM 16 bits estéreo 44,1 kHz en caché (`id.pcm`),
+  picos cada 10 ms para la forma de onda, mezcla (`Plan` + `mix`) y `Player` (AudioTrack; la imagen sigue a lo que
+  ya sonó). Traspaso: `moSnd {id,ext,i,n,d(base64)}` por la misma fila, antes de las órdenes que lo usan.
+- `Export` — MP4: H.264 dibujando cada fotograma en la superficie del codificador + AAC con la mezcla; tiempos
+  exactos n/fps; queda en Películas › DUAL Motion (MediaStore; en Android 9 archivo + permiso).
 - `Ui` — cristal blanco con verde, panel naranja, botones de símbolo (nombre al mantener), íconos de herramientas.
 
 ## Sincronía (igual que DUAL-Draw)
@@ -56,12 +67,19 @@ Las dos pantallas son UNA: lo repartido se comporta como un solo elemento.
 - `moState {tool, sc, fc, sw, l, f, on, ap?}`: `ap` = "s"/"f"/"w" aplica trazo/relleno/grosor a lo seleccionado.
 - `moPlay {on, f}` y `moTick {f}` (cada 1 s): cada teléfono corre su propio reloj y se corrige.
 - `moCmd {c}`: `delSel`, `front`, `back`, `fit` (la selección vive en la mesa). `moPick` (cuentagotas), `moSel {n}`.
+- **Mesa visible**: el principal manda `moShow` al abrirse (o al conectarse) y `moHide` al irse a segundo plano
+  (no si solo abrió un selector de archivos o un permiso: `keepStage`). El extendido responde `moVis {on}` y con
+  `moHide` hace `moveTaskToBack`. El principal muestra "mesa a la vista / oculta (toca para mostrarla)".
+- El sonido suena solo en el principal (o en solo), nunca en la mesa.
 
 ### Órdenes del documento
 `add {l,f,s}`, `set {l,f,is,ss}`, `del {l,f,is}`, `order {l,f,is,to}`, `key {l,f,blank?}` (F6/F7),
 `frame {l,f}` (F5), `delFrame {l,f}`, `clearKey {l,f}`, `layer {l,name?,vis?,lock?,out?}`, `layerAdd {at}`,
 `layerDel {l}`, `layerMove {l,to}`, `fps {v}`, `new`, `load {doc}`, `undo`, `redo`,
-`xf {l,f,x?,y?,sx?,sy?,r?,a?,px?,py?}` (pose del clave), `tween {l,f,on}`, `ease {l,f,c:[x1,y1,x2,y2]}`, `spin {l,f,n}`.
+`xf {l,f,x?,y?,sx?,sy?,r?,a?,px?,py?}` (pose del clave), `tween {l,f,on}`, `ease {l,f,c:[x1,y1,x2,y2]}`, `spin {l,f,n}`,
+`sndAdd {id,name,ext,dur}`, `layerAdd {at,audio:1}`, `clipAdd {l,c}`, `clipSet {l,i,c}`, `clipDel {l,i}`,
+`clipSplit {l,i,t}` (clip `c = {s, at, in, len, v}` en ms). Las capas de sonido (`Layer.audio`) solo aceptan
+órdenes `clip*` y `layer`; no alargan la animación (`length()` mira solo las de dibujo).
 Dibujar en un fotograma después del final de la capa crea ahí un clave vacío (como en Flash).
 `tween` sin clave final crea uno al final del tramo (o 1 s después). `xf` o F6 en medio de una interpolación crean
 ahí un clave con la pose interpolada.
@@ -73,6 +91,15 @@ manillas = escalar, por fuera de las esquinas = girar; escala y giro alrededor d
 = cerrar, último punto o "✓ Terminar" = terminar), Línea, Rectángulo, Óvalo, Lápiz, Pincel (usa el color de
 relleno), Cubo de pintura, Bote de tinta, Cuentagotas, Borrador (borra formas enteras), Mano.
 
+## Línea de tiempo (principal)
+
+- Encabezado: ＋ capa, − capa, ♪ agregar sonido (crea una capa de sonido arriba de la actual si hace falta y pone
+  el sonido en el cabezal). En las filas de sonido: arrastrar un trozo = moverlo (por fotogramas); arrastrar sus
+  bordes = recortar; mantener = menú (cortar en el cabezal, llevar al cabezal, volumen, duplicar, borrar).
+  ✂ en la barra corta en el cabezal.
+- Botones ● y ○ con variante (mantener presionado): aquí, o "→" en el fotograma siguiente (y el cabezal avanza).
+  Prefs `keyNext`, `blankNext`.
+
 ## Etapas
 
 1. ✅ Base: papeles, documento capas × claves, dibujo vectorial, línea de tiempo con cabezal, reproducir
@@ -81,7 +108,7 @@ relleno), Cubo de pintura, Bote de tinta, Cuentagotas, Borrador (borra formas en
    giros; transformación libre; guardar/abrir `.dmo`.
 3. Símbolos: biblioteca, gráfico, clip de película, botón; instancias; editar en el lugar.
 4. Interpolación de forma, guía de movimiento, máscara, filtros, mezcla; operaciones entre trazados.
-5. Publicar: MP4 (`MediaCodec`), GIF, secuencia PNG; capa de sonido.
+5. Publicar: ✅ MP4 con sonido y ✅ capas de sonido; falta GIF y secuencia PNG.
 6. Acciones simples, video de referencia, Lottie.
 
 ## Chequeo rápido sin Gradle

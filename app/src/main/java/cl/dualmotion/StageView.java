@@ -212,7 +212,7 @@ public final class StageView extends View {
 
         for (int i = d.layers.size() - 1; i >= 0; i--) {
             MDoc.Layer L = d.layers.get(i);
-            if (!L.vis) continue;
+            if (!L.vis || L.audio) continue;
             MDoc.Pose ps = i == st.layer && !playing ? curPose() : MDoc.pose(L, f);
             if (ps == null) continue;
             int outline = L.out ? L.color : 0;
@@ -460,8 +460,9 @@ public final class StageView extends View {
     /** ¿Se puede editar la capa actual? Si no, avisa una vez por gesto. */
     private boolean editable() {
         MDoc.Layer L = curLayer();
-        if (L != null && L.vis && !L.lock) return true;
-        if (!blocked) Ui.toast(getContext(), L == null ? "No hay capa" : !L.vis ? "La capa está oculta" : "La capa está bloqueada");
+        if (L != null && L.vis && !L.lock && !L.audio) return true;
+        if (!blocked) Ui.toast(getContext(), L == null ? "No hay capa" : L.audio ? "Es una capa de sonido: elige una capa de dibujo"
+                : !L.vis ? "La capa está oculta" : "La capa está bloqueada");
         blocked = true;
         return false;
     }

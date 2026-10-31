@@ -14,15 +14,20 @@ import java.util.HashSet;
 public final class Render {
     private Render() { }
 
-    private static final Paint fillP = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private static final Paint strokeP = new Paint(Paint.ANTI_ALIAS_FLAG);
-    static {
-        fillP.setStyle(Paint.Style.FILL);
-        strokeP.setStyle(Paint.Style.STROKE);
-        strokeP.setStrokeCap(Paint.Cap.ROUND);
-        strokeP.setStrokeJoin(Paint.Join.ROUND);
+    /** Pinceles por hilo: la pantalla y la exportación a video dibujan al mismo tiempo. */
+    private static final class Tools {
+        final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final Matrix m = new Matrix();
+        Tools() {
+            fill.setStyle(Paint.Style.FILL);
+            stroke.setStyle(Paint.Style.STROKE);
+            stroke.setStrokeCap(Paint.Cap.ROUND);
+            stroke.setStrokeJoin(Paint.Join.ROUND);
+        }
     }
-
+    private static final ThreadLocal<Tools> TOOLS = new ThreadLocal<Tools>() {
+        @Override protected Tools initialValue() { return new Tools(); }
+    };
     public static Path path(MDoc.Shape s) {
         if (s.path != null) return s.path;
         Path p = new Path();
@@ -61,6 +66,8 @@ public final class Render {
      */
     public static void shape(Canvas c, MDoc.Shape s, int tint, int outline, float hair) {
         Path p = path(s);
+        Tools t = TOOLS.get();
+        Paint fillP = t.fill, strokeP = t.stroke;
         if (outline != 0) {
             strokeP.setColor(outline);
             strokeP.setStrokeWidth(hair);
@@ -94,7 +101,6 @@ public final class Render {
         return out;
     }
 
-    private static final Matrix tmpM = new Matrix();
 
     /** Dibuja la capa en el fotograma f con su transformación y alfa (interpolados si corresponde). */
     public static void layer(Canvas c, MDoc.Layer L, int f, int tint, int outline, float hair) {
@@ -105,7 +111,7 @@ public final class Render {
     public static void pose(Canvas c, MDoc.Pose p, int tint, int outline, float hair) {
         if (p.key.shapes.isEmpty() || p.alpha <= 0) return;
         int save = p.alpha < 1 && outline == 0 ? c.saveLayerAlpha(null, Math.round(p.alpha * 255)) : c.save();
-        c.concat(matrix(p, tmpM));
+        c.concat(matrix(p, TOOLS.get().m));
         float sc = Math.max(0.01f, (Math.abs(p.sx) + Math.abs(p.sy)) / 2);
         key(c, p.key, tint, outline, hair / sc);
         c.restoreToCount(save);
@@ -118,7 +124,7 @@ public final class Render {
     public static void frame(Canvas c, MDoc d, int f, boolean respectVis, boolean outlines, float hair) {
         for (int i = d.layers.size() - 1; i >= 0; i--) {
             MDoc.Layer L = d.layers.get(i);
-            if (respectVis && !L.vis) continue;
+            if (L.audio || (respectVis && !L.vis)) continue;
             layer(c, L, f, 0, outlines && L.out ? L.color : 0, hair);
         }
     }
@@ -132,7 +138,7 @@ public final class Render {
     public static void onion(Canvas c, MDoc d, int f, int range, float hair) {
         for (int i = d.layers.size() - 1; i >= 0; i--) {
             MDoc.Layer L = d.layers.get(i);
-            if (!L.vis) continue;
+            if (L.audio || !L.vis) continue;
             MDoc.Pose cur = MDoc.pose(L, f);
             HashSet<Integer> done = new HashSet<>();
             if (cur != null && !cur.tweening) done.add(cur.keyFrame);

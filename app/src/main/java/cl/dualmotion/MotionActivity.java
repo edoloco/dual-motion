@@ -55,7 +55,12 @@ public final class MotionActivity extends Activity
 
     private MDoc doc = new MDoc();
     private final State st = new State();
-    private Net net;
+    /** Pantalla de DUAL Motion a la vista (el servicio lo mira antes de traer la mesa al frente). */
+    static volatile boolean visible;
+    /** Principal: ¿la mesa del extendido está a la vista? */
+    private boolean stageShown;
+    /** Principal: no ocultar la mesa al salir (se abrió un selector de archivos o un permiso). */
+    private boolean keepStage;
     private boolean connected;
     private int selN;
 
@@ -94,16 +99,67 @@ public final class MotionActivity extends Activity
         if (!isView()) loadAutosave();
         if (!isEdit()) restoreState();
         if (isEdit()) buildEdit(); else buildMain();
-        if (isEdit()) { net = new Net(this, this); net.startHost(); }
-        else if (isView()) { net = new Net(this, this); net.startClient(prefs.getString("ip", null)); }
+        if (!isSolo()) { LinkService.start(this, role); LinkService.attach(this); }
+        Sounds.onChange = () -> { if (tl != null) tl.invalidate(); };
+        Sounds.warm(this, doc);
+        askPermissions();
+        if (!isEdit()) Updater.checkQuiet(this);
         refreshAll();
+    }
+
+    /** Avisos (Android 13+) y, en el extendido, "mostrar sobre otras apps" para que la mesa aparezca sola. */
+    private void askPermissions() {
+        if (android.os.Build.VERSION.SDK_INT >= 33 && !isSolo()
+                && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED)
+            requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 5);
+        if (isEdit() && !android.provider.Settings.canDrawOverlays(this) && !prefs.getBoolean("overlayAsked", false)) {
+            prefs.edit().putBoolean("overlayAsked", true).apply();
+            new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                    .setTitle("Mesa automática")
+                    .setMessage("Para que la mesa de trabajo aparezca sola cuando abras DUAL Motion en el principal, "
+                            + "Android pide permitir \"Mostrar sobre otras apps\" para DUAL Motion en este teléfono.")
+                    .setNegativeButton("Ahora no", null)
+                    .setPositiveButton("Abrir ajustes", (d, w) -> {
+                        try {
+                            startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:" + getPackageName())));
+                        } catch (Exception ignored) { }
+                    }).show();
+        }
     }
 
     private boolean isView() { return VIEW.equals(role); }
     private boolean isEdit() { return EDIT.equals(role); }
     private boolean isSolo() { return SOLO.equals(role); }
 
-    @Override protected void onResume() { super.onResume(); hideBars(); }
+    @Override protected void onResume() { super.onResume(); hideBars(); keepStage = false; }
+
+    @Override protected void onStart() {
+        super.onStart();
+        visible = true;
+        if (role == null) return;
+        if (isEdit()) send("moVis", "on", true);
+        else if (isView() && connected) send("moShow");
+    }
+
+    @Override protected void onStop() {
+        super.onStop();
+        visible = false;
+        if (role == null) return;
+        if (isEdit()) send("moVis", "on", false);
+        // el principal se fue a segundo plano: la mesa se esconde (no si solo se abrió un selector o un permiso)
+        else if (isView() && connected && !keepStage && !isChangingConfigurations()) send("moHide");
+    }
+
+    @Override public void startActivityForResult(Intent i, int code, Bundle opts) {
+        keepStage = true;
+        super.startActivityForResult(i, code, opts);
+    }
+
+    @Override public void startActivity(Intent i) {
+        keepStage = true;
+        super.startActivity(i);
+    }
 
     @Override public void onWindowFocusChanged(boolean f) { super.onWindowFocusChanged(f); if (f) hideBars(); }
 
@@ -117,7 +173,7 @@ public final class MotionActivity extends Activity
     @Override protected void onDestroy() {
         super.onDestroy();
         stopPlay(false);
-        if (net != null) net.stop();
+        LinkService.detach(this);
     }
 
     @Override public void onBackPressed() {
@@ -214,7 +270,10 @@ public final class MotionActivity extends Activity
         docLabel.setSingleLine(true);
         head.addView(docLabel, new LinearLayout.LayoutParams(0, -2, 1));
         connLabel = Ui.label(this, isSolo() ? "Un solo teléfono" : "Buscando el extendido…", 13, 0xFFFFFFFF);
-        connLabel.setOnClickListener(v -> connectionDialog());
+        connLabel.setOnClickListener(v -> {
+            if (isView() && connected && !stageShown) { send("moShow"); Ui.toast(this, "Mostrando la mesa en el extendido…"); }
+            else connectionDialog();
+        });
         head.addView(connLabel);
         center.addView(head);
 
@@ -285,11 +344,12 @@ public final class MotionActivity extends Activity
         addBtn(c, "›", "Fotograma siguiente", () -> select(st.layer, st.frame + 1));
         addBtn(c, "⇥", "Último fotograma", () -> select(st.layer, doc.length() - 1));
         gap(c);
-        addBtn(c, "●", "Insertar fotograma clave", () -> frameOp("key", false));
-        addBtn(c, "○", "Insertar fotograma clave vacío", () -> frameOp("key", true));
+        keyBtn = keyButton(c, false);
+        blankBtn = keyButton(c, true);
         addBtn(c, "＋", "Insertar fotograma", () -> frameOp("frame", false));
         addBtn(c, "－", "Quitar fotograma", () -> frameOp("delFrame", false));
         addBtn(c, "↝", "Crear / quitar interpolación de movimiento", this::toggleTween);
+        addBtn(c, "✂", "Cortar el sonido en el cabezal", this::cutClip);
         gap(c);
         onionBtn = addBtn(c, "◐", "Papel cebolla", () -> {
             st.onion = !st.onion;
@@ -300,6 +360,46 @@ public final class MotionActivity extends Activity
         infoLabel.setSingleLine(true);
         c.addView(infoLabel, new LinearLayout.LayoutParams(0, -1, 1));
         return c;
+    }
+
+    private TextView keyBtn, blankBtn;
+
+    /**
+     * Botón de fotograma clave (● lleno) o clave vacío (○), con dos variantes como las herramientas agrupadas:
+     * en este fotograma, o "→" en el fotograma siguiente (y el cabezal avanza ahí). Mantener presionado elige.
+     */
+    private TextView keyButton(LinearLayout c, final boolean blank) {
+        final String pref = blank ? "blankNext" : "keyNext";
+        final TextView t = addBtn(c, "", "", null);
+        t.setOnClickListener(v -> {
+            boolean next = prefs.getBoolean(pref, false);
+            int f = next ? st.frame + 1 : st.frame;
+            JSONObject o = op("key", "l", st.layer, "f", f);
+            if (blank) try { o.put("blank", 1); } catch (JSONException ignored) { }
+            request(o);
+            if (next) select(st.layer, f);
+        });
+        t.setOnLongClickListener(v -> {
+            String a = blank ? "○" : "●", name = blank ? "clave vacío" : "fotograma clave";
+            new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                    .setTitle(blank ? "Fotograma clave vacío" : "Fotograma clave")
+                    .setItems(new String[]{a + "   Insertar " + name + " aquí", a + "→  Insertar " + name + " en el fotograma siguiente"},
+                            (d, w) -> { prefs.edit().putBoolean(pref, w == 1).apply(); refreshKeyButtons(); })
+                    .show();
+            return true;
+        });
+        return t;
+    }
+
+    private void refreshKeyButtons() {
+        if (keyBtn == null) return;
+        boolean k = prefs.getBoolean("keyNext", false), b = prefs.getBoolean("blankNext", false);
+        keyBtn.setText(k ? "●→" : "●");
+        keyBtn.setTextSize(k ? 15 : 20);
+        keyBtn.setContentDescription(k ? "Insertar fotograma clave en el siguiente" : "Insertar fotograma clave");
+        blankBtn.setText(b ? "○→" : "○");
+        blankBtn.setTextSize(b ? 15 : 20);
+        blankBtn.setContentDescription(b ? "Insertar clave vacío en el siguiente" : "Insertar fotograma clave vacío");
     }
 
     private TextView addBtn(LinearLayout parent, String sym, String name, Runnable r) {
@@ -564,12 +664,19 @@ public final class MotionActivity extends Activity
     private int pf0, pFrame;
     private long pt0, lastTick;
 
+    private final Sounds.Player audio = new Sounds.Player();
+
     private final Choreographer.FrameCallback tick = new Choreographer.FrameCallback() {
         @Override public void doFrame(long now) {
             if (!playing) return;
             int len = doc.length();
             long el = Math.max(0, now - pt0);
             int f = pf0 + (int) (el * doc.fps / 1_000_000_000L);
+            long ams = audio.positionMs();
+            if (ams >= 0) { // con sonido, la imagen sigue a lo que ya sonó
+                int af = (int) (ams * doc.fps / 1000);
+                f = loop ? af : Math.max(af, pf0);
+            }
             if (f >= len) {
                 if (loop) f %= len;
                 else { pFrame = len - 1; stopPlay(true); if (isView()) { sendPlay(false, st.frame); stateChanged(null); } refreshAll(); refreshPreviewBar(); return; }
@@ -590,6 +697,11 @@ public final class MotionActivity extends Activity
         pt0 = System.nanoTime();
         lastTick = System.currentTimeMillis();
         if (stage != null) stage.toolChanged();
+        // el sonido suena en el principal (o en el modo solo), no en la mesa
+        if (!isEdit() && doc.hasAudio()) {
+            Sounds.Plan plan = Sounds.plan(this, doc, false);
+            audio.start(plan, (long) pf0 * 1000 / doc.fps, loop ? doc.durationMs() : 0);
+        }
         Choreographer.getInstance().postFrameCallback(tick);
         onPlayFrame();
     }
@@ -598,6 +710,7 @@ public final class MotionActivity extends Activity
     private void stopPlay(boolean keep) {
         if (!playing) return;
         playing = false;
+        audio.stop();
         Choreographer.getInstance().removeFrameCallback(tick);
         if (keep) st.frame = pFrame;
         refreshAll();
@@ -658,6 +771,7 @@ public final class MotionActivity extends Activity
     }
 
     private void docChanged() {
+        if (!doc.sounds.isEmpty()) { Sounds.need(this, doc); Sounds.warm(this, doc); }
         clampState();
         refreshAll();
     }
@@ -717,7 +831,7 @@ public final class MotionActivity extends Activity
     }
 
     // ================================================================ red
-    private void sendRaw(JSONObject m) { if (net != null) net.send(m); }
+    private void sendRaw(JSONObject m) { if (!isSolo()) LinkService.send(m); }
 
     private void send(String t, Object... kv) {
         JSONObject m = new JSONObject();
@@ -735,9 +849,12 @@ public final class MotionActivity extends Activity
                 JSONObject m = new JSONObject();
                 try { m.put("t", "moFull"); m.put("doc", doc.toJson()); } catch (JSONException ignored) { }
                 sendRaw(m);
+                send("moVis", "on", visible);
+                Sounds.need(this, doc);
             }
         } else if (isView()) {
-            if (on) stateChanged(null);
+            if (!on) stageShown = false;
+            if (on) { stateChanged(null); if (visible) send("moShow"); }
         }
         refreshAll();
     }
@@ -753,8 +870,20 @@ public final class MotionActivity extends Activity
                 if (d != null) doc.load(d);
                 clampState();
                 stateChanged(null);
+                Sounds.need(this, doc);
+                Sounds.warm(this, doc);
                 break;
             }
+            case "moVis":
+                stageShown = m.optBoolean("on");
+                refreshProps();
+                break;
+            case "moMsg":
+                Ui.toast(this, m.optString("msg"));
+                break;
+            case "moHide": // el principal se fue: la mesa se esconde (vuelve lo que había antes)
+                if (isEdit() && visible) moveTaskToBack(true);
+                break;
             case "moPick":
                 st.stroke = m.optInt("sc", st.stroke);
                 st.fill = m.optInt("fc", st.fill);
@@ -804,7 +933,178 @@ public final class MotionActivity extends Activity
     SharedPreferences prefs() { return prefs; }
 
     /** Carga un documento abierto (se puede deshacer). En el principal se le pide al extendido. */
-    void loadDoc(JSONObject d) { request(op("load", "doc", d)); }
+    void loadDoc(JSONObject d) {
+        if (isView()) { // primero viajan los sonidos que trae el archivo, después la orden
+            org.json.JSONArray ss = d.optJSONArray("sounds");
+            for (int i = 0; ss != null && i < ss.length(); i++) {
+                JSONObject so = ss.optJSONObject(i);
+                if (so != null) Sounds.sendFile(this, so.optString("id"), so.optString("ext"));
+            }
+        }
+        request(op("load", "doc", d));
+    }
+
+    // ================================================================ sonido
+    @Override public void addSound() {
+        if (isView() && !connected) { Ui.toast(this, "Sin conexión con el extendido"); return; }
+        Files.pickAudio(this);
+    }
+
+    /** Llegó un archivo de sonido elegido: se importa y se pone en el cabezal (en una capa de sonido). */
+    void importSound(Uri u) {
+        Ui.toast(this, "Cargando el sonido…");
+        Sounds.importUri(this, u, (snd, err) -> {
+            if (snd == null) { Ui.toast(this, "No se pudo cargar el sonido: " + err); return; }
+            if (isView()) Sounds.sendFile(this, snd.id, snd.ext); // el archivo viaja antes que las órdenes
+            request(op("sndAdd", "id", snd.id, "name", snd.name, "ext", snd.ext, "dur", snd.dur));
+            MDoc.Layer L = doc.layer(st.layer);
+            int l = st.layer;
+            if (L == null || !L.audio) request(op("layerAdd", "at", l, "audio", 1)); // capa de sonido nueva arriba de la actual
+            MDoc.Clip c = new MDoc.Clip();
+            c.s = snd.id;
+            c.at = (int) ((long) st.frame * 1000 / doc.fps);
+            c.in = 0;
+            c.len = Math.max(1, snd.dur);
+            try { request(op("clipAdd", "l", l, "c", c.toJson())); } catch (JSONException ignored) { }
+            Ui.toast(this, "Sonido agregado: " + snd.name);
+        });
+    }
+
+    @Override public void clipChange(int layer, int index, MDoc.Clip c) {
+        try { request(op("clipSet", "l", layer, "i", index, "c", c.toJson())); } catch (JSONException ignored) { }
+    }
+
+    /** Cortar en el cabezal: el trozo seleccionado o el que está bajo el cabezal en la capa de sonido actual. */
+    private void cutClip() {
+        int t = (int) ((long) st.frame * 1000 / doc.fps);
+        int l = tl != null && tl.selClipL >= 0 ? tl.selClipL : st.layer;
+        MDoc.Layer L = doc.layer(l);
+        if (L == null || !L.audio) { Ui.toast(this, "Elige una capa de sonido (o toca un trozo de sonido)"); return; }
+        int i = tl != null && tl.selClipL == l ? tl.selClipI : -1;
+        if (i < 0 || i >= L.clips.size() || t <= L.clips.get(i).at || t >= L.clips.get(i).end()) {
+            i = -1;
+            for (int k = L.clips.size() - 1; k >= 0; k--)
+                if (t > L.clips.get(k).at && t < L.clips.get(k).end()) { i = k; break; }
+        }
+        if (i < 0) { Ui.toast(this, "Pon el cabezal sobre un sonido para cortarlo"); return; }
+        request(op("clipSplit", "l", l, "i", i, "t", t));
+    }
+
+    @Override public void clipMenu(final int layer, final int index) {
+        MDoc.Layer L = doc.layer(layer);
+        if (L == null || index >= L.clips.size()) return;
+        final MDoc.Clip c = L.clips.get(index);
+        MDoc.Sound snd = doc.sound(c.s);
+        String[] items = {"Cortar en el cabezal", "Llevar al cabezal", "Volumen…", "Duplicar", "Borrar este sonido"};
+        new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setTitle(snd != null ? "♪ " + snd.name : "Sonido")
+                .setItems(items, (d, w) -> {
+                    int t = (int) ((long) st.frame * 1000 / doc.fps);
+                    switch (w) {
+                        case 0:
+                            if (t > c.at && t < c.end()) request(op("clipSplit", "l", layer, "i", index, "t", t));
+                            else Ui.toast(this, "El cabezal no está sobre este sonido");
+                            break;
+                        case 1: { MDoc.Clip k = c.copy(); k.at = t; clipChange(layer, index, k); break; }
+                        case 2: volumeDialog(layer, index, c); break;
+                        case 3: {
+                            MDoc.Clip k = c.copy();
+                            k.at = c.end();
+                            try { request(op("clipAdd", "l", layer, "c", k.toJson())); } catch (JSONException ignored) { }
+                            break;
+                        }
+                        case 4:
+                            request(op("clipDel", "l", layer, "i", index));
+                            if (tl != null) tl.clearClipSel();
+                            break;
+                    }
+                }).show();
+    }
+
+    private void volumeDialog(final int layer, final int index, final MDoc.Clip c) {
+        final SeekBar sb = new SeekBar(this);
+        sb.setMax(200);
+        sb.setProgress(Math.round(c.vol * 100));
+        final TextView lab = Ui.label(this, Math.round(c.vol * 100) + " %", 15, Ui.INK);
+        lab.setGravity(Gravity.CENTER);
+        sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int v, boolean u) { lab.setText(v + " %"); }
+            @Override public void onStartTrackingTouch(SeekBar s) { }
+            @Override public void onStopTrackingTouch(SeekBar s) { }
+        });
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(10), dp(20), 0);
+        box.addView(lab);
+        box.addView(sb);
+        new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setTitle("Volumen").setView(box)
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Listo", (d, w) -> {
+                    MDoc.Clip k = c.copy();
+                    k.vol = sb.getProgress() / 100f;
+                    clipChange(layer, index, k);
+                }).show();
+    }
+
+    // ================================================================ exportar video
+    private void exportVideo() {
+        if (android.os.Build.VERSION.SDK_INT < 29
+                && checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            keepStage = true;
+            requestPermissions(new String[]{android.Manifest.permission.WRITE_EXTERNAL_STORAGE}, 9);
+            return;
+        }
+        String base = prefs.getString("docName", "Animación");
+        if (base.endsWith(".dmo")) base = base.substring(0, base.length() - 4);
+        final String name = base + " " + new java.text.SimpleDateFormat("yyyy-MM-dd HHmm", Locale.US).format(new java.util.Date());
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(10), dp(20), 0);
+        final TextView t = Ui.label(this, "Preparando…", 14, Ui.INK);
+        box.addView(t);
+        final android.widget.ProgressBar pb = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        pb.setMax(1000);
+        box.addView(pb);
+        final AlertDialog dlg = new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setTitle("Exportando video").setView(box).setCancelable(false)
+                .setNegativeButton("Cancelar", (d, w) -> Export.cancel = true).show();
+        Export.start(this, doc, name, new Export.Listener() {
+            @Override public void progress(int done, int total) {
+                ui.post(() -> { pb.setProgress(done * 1000 / Math.max(1, total)); t.setText("Fotograma " + done + " de " + total); });
+            }
+            @Override public void finished(Uri uri, String error) {
+                ui.post(() -> {
+                    try { dlg.dismiss(); } catch (Exception ignored) { }
+                    if (uri == null) { Ui.toast(MotionActivity.this, "No se pudo exportar: " + error); return; }
+                    exported(uri, name);
+                });
+            }
+        });
+    }
+
+    @Override public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
+        super.onRequestPermissionsResult(code, perms, res);
+        if (code == 9 && res.length > 0 && res[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) exportVideo();
+    }
+
+    private void exported(final Uri uri, String name) {
+        new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setTitle("Video listo")
+                .setMessage(name + ".mp4\nQuedó en Películas › DUAL Motion.")
+                .setNegativeButton("Cerrar", null)
+                .setNeutralButton("Compartir", (d, w) -> {
+                    try {
+                        startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("video/mp4")
+                                .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Compartir video"));
+                    } catch (Exception e) { Ui.toast(this, "No se pudo compartir"); }
+                })
+                .setPositiveButton("Ver", (d, w) -> {
+                    try { startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "video/mp4")
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)); }
+                    catch (Exception e) { Ui.toast(this, "No hay app para ver el video"); }
+                }).show();
+    }
 
     @Override protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
@@ -905,7 +1205,8 @@ public final class MotionActivity extends Activity
     // ================================================================ menú
     @Override public void menu() {
         String[] items = {"Guardar", "Guardar como…", "Abrir…", "Nuevo documento", "Conexión",
-                "Cambiar el papel de este teléfono", "Ver versiones (GitHub)", "Acerca de DUAL Motion"};
+                "Cambiar el papel de este teléfono", "Buscar actualización", "Acerca de DUAL Motion",
+                "Exportar video (MP4)", "Agregar sonido…"};
         new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
                 .setItems(items, (d, w) -> {
                     switch (w) {
@@ -924,14 +1225,14 @@ public final class MotionActivity extends Activity
                         case 4: connectionDialog(); break;
                         case 5:
                             prefs.edit().remove("role").apply();
-                            if (net != null) net.stop();
+                            LinkService.detach(this);
+                            LinkService.stop(this);
                             recreate();
                             break;
-                        case 6:
-                            try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES))); }
-                            catch (Exception e) { Ui.toast(this, RELEASES); }
-                            break;
+                        case 6: Updater.check(this); break;
                         case 7: about(); break;
+                        case 8: exportVideo(); break;
+                        case 9: addSound(); break;
                     }
                 }).show();
     }
@@ -954,7 +1255,7 @@ public final class MotionActivity extends Activity
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(20), dp(8), dp(20), 0);
         String txt = "Este teléfono: " + roleName() + "\nIP en el WiFi: " + Net.localIp() + "\nEstado: "
-                + (connected ? "conectado con " + (net != null ? net.peer() : "") : "sin conexión");
+                + (connected ? "conectado con " + LinkService.peer() : "sin conexión");
         box.addView(Ui.label(this, txt, 15, Ui.INK));
         final EditText ip = new EditText(this);
         if (isView()) {
@@ -970,7 +1271,7 @@ public final class MotionActivity extends Activity
         if (isView()) b.setPositiveButton("Conectar", (d, w) -> {
             String s = ip.getText().toString().trim();
             prefs.edit().putString("ip", s).apply();
-            if (!s.isEmpty() && net != null) net.connectTo(s);
+            if (!s.isEmpty()) LinkService.connectTo(s);
         });
         b.show();
     }
@@ -999,6 +1300,7 @@ public final class MotionActivity extends Activity
     }
 
     private void refreshProps() {
+        refreshKeyButtons();
         if (docLabel != null) docLabel.setText("🎬 " + doc.scene + "  ·  " + prefs.getString("docName", "Sin guardar"));
         if (tweenBtn != null) {
             java.util.Map.Entry<Integer, MDoc.Key> e = curKeyEntry();
@@ -1027,7 +1329,8 @@ public final class MotionActivity extends Activity
         }
         if (onionBtn != null) onionBtn.setTextColor(st.onion ? Ui.ORANGE : Ui.INK);
         if (connLabel != null && isView())
-            connLabel.setText(connected ? "● Conectado con el extendido" : "○ Buscando el extendido…  (toca para ver)");
+            connLabel.setText(!connected ? "○ Buscando el extendido…  (toca para ver)"
+                    : stageShown ? "● Conectado · mesa a la vista" : "● Conectado · la mesa está oculta (toca para mostrarla)");
     }
 
     private void updateInfo() {

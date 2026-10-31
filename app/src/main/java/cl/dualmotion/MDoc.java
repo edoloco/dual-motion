@@ -196,6 +196,46 @@ public final class MDoc {
         return 3 * v * v * u * p1 + 3 * v * u * u * p2 + u * u * u;
     }
 
+    // ---------------------------------------------------------------- sonido
+    /** Sonido de la biblioteca: el archivo vive en cada teléfono (Sounds), el documento solo lo nombra. */
+    public static final class Sound {
+        public String id, name, ext;
+        public int dur; // ms
+        JSONObject toJson() throws JSONException {
+            JSONObject o = new JSONObject();
+            o.put("id", id); o.put("name", name); o.put("ext", ext); o.put("dur", dur);
+            return o;
+        }
+        static Sound from(JSONObject o) {
+            Sound s = new Sound();
+            s.id = o.optString("id"); s.name = o.optString("name", "Sonido"); s.ext = o.optString("ext", "m4a");
+            s.dur = Math.max(0, o.optInt("dur"));
+            return s;
+        }
+    }
+
+    /** Trozo de un sonido puesto en una capa de audio: empieza en "at" (ms de la línea de tiempo), usa el
+     *  sonido desde "in" (ms) durante "len" ms, con volumen "vol". */
+    public static final class Clip {
+        public String s;
+        public int at, in, len;
+        public float vol = 1;
+        public Clip copy() { Clip c = new Clip(); c.s = s; c.at = at; c.in = in; c.len = len; c.vol = vol; return c; }
+        public int end() { return at + len; }
+        public JSONObject toJson() throws JSONException {
+            JSONObject o = new JSONObject();
+            o.put("s", s); o.put("at", at); o.put("in", in); o.put("len", len);
+            if (vol != 1) o.put("v", Math.round(vol * 100) / 100.0);
+            return o;
+        }
+        public static Clip from(JSONObject o) {
+            Clip c = new Clip();
+            c.s = o.optString("s"); c.at = Math.max(0, o.optInt("at")); c.in = Math.max(0, o.optInt("in"));
+            c.len = Math.max(1, o.optInt("len", 1)); c.vol = (float) Math.max(0, Math.min(2, o.optDouble("v", 1)));
+            return c;
+        }
+    }
+
     public static final class Layer {
         public String name = "Capa";
         public boolean vis = true, lock, out;
@@ -203,11 +243,20 @@ public final class MDoc {
         /** Cantidad de fotogramas de la capa (el último clave se extiende hasta aquí). */
         public int len = 1;
         public final TreeMap<Integer, Key> keys = new TreeMap<>();
+        /** Capa de audio: no tiene dibujo, sino trozos de sonido (puede tener varios). */
+        public boolean audio;
+        public final ArrayList<Clip> clips = new ArrayList<>();
 
         JSONObject toJson() throws JSONException {
             JSONObject o = new JSONObject();
             o.put("name", name); o.put("vis", vis); o.put("lock", lock); o.put("out", out);
             o.put("color", color); o.put("len", len);
+            if (audio) {
+                o.put("type", "audio");
+                JSONArray cs = new JSONArray();
+                for (Clip c : clips) cs.put(c.toJson());
+                o.put("clips", cs);
+            }
             JSONArray ks = new JSONArray();
             for (Map.Entry<Integer, Key> e : keys.entrySet()) {
                 JSONObject k = new JSONObject();
@@ -228,6 +277,12 @@ public final class MDoc {
             L.vis = o.optBoolean("vis", true); L.lock = o.optBoolean("lock"); L.out = o.optBoolean("out");
             L.color = o.optInt("color", 0xFF2FA866);
             L.len = Math.max(1, o.optInt("len", 1));
+            L.audio = "audio".equals(o.optString("type"));
+            JSONArray cs = o.optJSONArray("clips");
+            if (L.audio && cs != null) for (int i = 0; i < cs.length(); i++) {
+                JSONObject co = cs.optJSONObject(i);
+                if (co != null) L.clips.add(Clip.from(co));
+            }
             JSONArray ks = o.optJSONArray("keys");
             if (ks != null) for (int i = 0; i < ks.length(); i++) {
                 JSONObject k = ks.optJSONObject(i);
@@ -257,30 +312,49 @@ public final class MDoc {
     /** Contador para nombrar capas nuevas (parte del documento, para que los dos teléfonos coincidan). */
     public int seq = 1;
     public final ArrayList<Layer> layers = new ArrayList<>();
+    /** Biblioteca de sonidos del documento. */
+    public final ArrayList<Sound> sounds = new ArrayList<>();
 
     public MDoc() { reset(); }
 
     void reset() {
         w = 1280; h = 720; fps = 24; scene = "Escena 1"; seq = 1;
         layers.clear();
+        sounds.clear();
         layers.add(newLayer());
         undo.clear(); redo.clear();
     }
 
-    private Layer newLayer() {
+    private Layer newLayer() { return newLayer(false); }
+
+    private Layer newLayer(boolean audio) {
         Layer L = new Layer();
-        L.name = "Capa " + seq;
+        L.audio = audio;
+        L.name = (audio ? "Sonido " : "Capa ") + seq;
         L.color = LAYER_COLORS[(seq - 1) % LAYER_COLORS.length];
         seq++;
         L.keys.put(0, new Key());
         return L;
     }
 
-    /** Largo de la animación = la capa más larga. */
+    /** Largo de la animación = la capa de dibujo más larga (el sonido no alarga la animación). */
     public int length() {
         int n = 1;
-        for (Layer L : layers) n = Math.max(n, L.len);
+        for (Layer L : layers) if (!L.audio) n = Math.max(n, L.len);
         return n;
+    }
+
+    /** Duración de la animación en ms. */
+    public int durationMs() { return (int) Math.round(length() * 1000.0 / fps); }
+
+    public Sound sound(String id) {
+        for (Sound s : sounds) if (s.id.equals(id)) return s;
+        return null;
+    }
+
+    public boolean hasAudio() {
+        for (Layer L : layers) if (L.audio && L.vis && !L.clips.isEmpty()) return true;
+        return false;
     }
 
     /** Clave vigente en el fotograma f (null si la capa ya terminó). */
@@ -308,6 +382,11 @@ public final class MDoc {
             JSONArray ls = new JSONArray();
             for (Layer L : layers) ls.put(L.toJson());
             o.put("layers", ls);
+            if (!sounds.isEmpty()) {
+                JSONArray ss = new JSONArray();
+                for (Sound s : sounds) ss.put(s.toJson());
+                o.put("sounds", ss);
+            }
         } catch (JSONException ignored) { }
         return o;
     }
@@ -331,6 +410,12 @@ public final class MDoc {
             if (lo != null) layers.add(Layer.from(lo));
         }
         if (layers.isEmpty()) layers.add(newLayer());
+        sounds.clear();
+        JSONArray ss = o.optJSONArray("sounds");
+        if (ss != null) for (int i = 0; i < ss.length(); i++) {
+            JSONObject so = ss.optJSONObject(i);
+            if (so != null) sounds.add(Sound.from(so));
+        }
     }
 
     // ---------------------------------------------------------------- deshacer
@@ -390,7 +475,17 @@ public final class MDoc {
             }
             case "layerAdd": {
                 push(-1);
-                layers.add(clamp(m.optInt("at", 0), 0, layers.size()), newLayer());
+                layers.add(clamp(m.optInt("at", 0), 0, layers.size()), newLayer(m.optInt("audio") == 1));
+                return true;
+            }
+            case "sndAdd": { // agrega un sonido a la biblioteca (el archivo ya llegó a los dos teléfonos)
+                String id = m.optString("id");
+                if (id.isEmpty() || sound(id) != null) return false;
+                push(-1);
+                Sound s = new Sound();
+                s.id = id; s.name = m.optString("name", "Sonido"); s.ext = m.optString("ext", "m4a");
+                s.dur = Math.max(0, m.optInt("dur"));
+                sounds.add(s);
                 return true;
             }
             case "layerDel": {
@@ -409,8 +504,44 @@ public final class MDoc {
         if (l < 0 || l >= layers.size()) return false;
         Layer L = layers.get(l);
         int f = Math.max(0, m.optInt("f", 0));
+        boolean clipOp = op.startsWith("clip");
+        if (L.audio != clipOp && !"layer".equals(op)) return false; // el audio no se dibuja; el dibujo no tiene clips
 
         switch (op) {
+            case "clipAdd": {
+                Clip c = Clip.from(m.getJSONObject("c"));
+                if (sound(c.s) == null) return false;
+                push(l);
+                L.clips.add(c);
+                return true;
+            }
+            case "clipSet": {
+                int i = m.optInt("i", -1);
+                if (i < 0 || i >= L.clips.size()) return false;
+                push(l);
+                L.clips.set(i, Clip.from(m.getJSONObject("c")));
+                return true;
+            }
+            case "clipDel": {
+                int i = m.optInt("i", -1);
+                if (i < 0 || i >= L.clips.size()) return false;
+                push(l);
+                L.clips.remove(i);
+                return true;
+            }
+            case "clipSplit": { // cortar en t (ms): el trozo queda en dos
+                int i = m.optInt("i", -1), t = m.optInt("t");
+                if (i < 0 || i >= L.clips.size()) return false;
+                Clip c = L.clips.get(i);
+                if (t <= c.at || t >= c.end()) return false;
+                push(l);
+                Clip b = c.copy();
+                int cut = t - c.at;
+                c.len = cut;
+                b.at = t; b.in = c.in + cut; b.len -= cut;
+                L.clips.add(i + 1, b);
+                return true;
+            }
             case "layer": {
                 push(l);
                 if (m.has("name")) L.name = m.optString("name", L.name);
