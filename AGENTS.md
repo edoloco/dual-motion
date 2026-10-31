@@ -42,6 +42,10 @@ Las dos pantallas son UNA: lo repartido se comporta como un solo elemento.
 - `Render` — dibuja formas, capas con su pose (`Render.layer/pose/matrix`), fotogramas y papel cebolla; toques sobre formas (`hit`); suaviza trazos a mano alzada.
 - `StageView` — la mesa: herramientas, zoom/encuadre con dos dedos, selección, subselección, pluma,
   transformación libre. Las herramientas de dibujo trabajan en coordenadas propias del clave (deshacen su pose).
+- `PlayerBar` — barra de reproducción al estilo del control de video de ChronOS (fondo oscuro, botones redondos,
+  ▶ rojo grande = vista previa a pantalla completa, barra de avance roja que mueve el cabezal con marcas en los
+  claves de la capa actual, velocidad, repetir, papel cebolla). Va entre la línea de tiempo y la barra de
+  herramientas de fotograma (● ○ ＋ − ↝ ✂).
 - `TimelineView` — línea de tiempo dibujada a mano (nombres con ojo/candado/contorno, grilla, cabezal rojo).
 - `State` — herramienta, colores, grosor, capa y fotograma actuales, papel cebolla (lo decide el principal).
 - `Net` — conexión TCP por WiFi (puerto 47830) con anuncio UDP (47831); una sola fila de envío; latido cada 3 s.

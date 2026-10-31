@@ -44,7 +44,7 @@ import java.util.Locale;
  * colores, capa, fotograma), moPlay / moTick (reproducción), moCmd, moPick, moSel.
  */
 public final class MotionActivity extends Activity
-        implements StageView.Host, TimelineView.Host, Net.Listener {
+        implements StageView.Host, TimelineView.Host, PlayerBar.Host, Net.Listener {
 
     public static final String VIEW = "view", EDIT = "edit", SOLO = "solo";
     static final String RELEASES = "https://github.com/edoloco/dual-motion/releases";
@@ -285,6 +285,9 @@ public final class MotionActivity extends Activity
         tlBox.addView(tl, new FrameLayout.LayoutParams(-1, -1));
         center.addView(tlBox, new LinearLayout.LayoutParams(-1, 0, isSolo() ? 0.42f : 1));
 
+        // reproducción (como el control de video de ChronOS), encima de las herramientas de fotograma
+        player = new PlayerBar(this, this);
+        center.addView(player, lpMargins(-1, dp(52), 0, dp(6), 0, 0));
         center.addView(buildControls(), lpMargins(-1, dp(46), 0, dp(6), 0, 0));
 
         if (isSolo()) {
@@ -337,29 +340,33 @@ public final class MotionActivity extends Activity
         c.setGravity(Gravity.CENTER_VERTICAL);
         c.setPadding(dp(6), dp(4), dp(6), dp(4));
         Ui.panel(c, Ui.glass(this));
-        addBtn(c, "⇤", "Primer fotograma", () -> select(st.layer, 0));
-        addBtn(c, "‹", "Fotograma anterior", () -> select(st.layer, Math.max(0, st.frame - 1)));
-        TextView play = addBtn(c, "▶", "Vista previa (pantalla completa)", this::openPreview);
-        play.setTextColor(Ui.GREEN);
-        addBtn(c, "›", "Fotograma siguiente", () -> select(st.layer, st.frame + 1));
-        addBtn(c, "⇥", "Último fotograma", () -> select(st.layer, doc.length() - 1));
-        gap(c);
         keyBtn = keyButton(c, false);
         blankBtn = keyButton(c, true);
         addBtn(c, "＋", "Insertar fotograma", () -> frameOp("frame", false));
         addBtn(c, "－", "Quitar fotograma", () -> frameOp("delFrame", false));
         addBtn(c, "↝", "Crear / quitar interpolación de movimiento", this::toggleTween);
         addBtn(c, "✂", "Cortar el sonido en el cabezal", this::cutClip);
-        gap(c);
-        onionBtn = addBtn(c, "◐", "Papel cebolla", () -> {
-            st.onion = !st.onion;
-            stateChanged(null);
-        });
-        infoLabel = Ui.label(this, "", 12, 0xFF555555);
-        infoLabel.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        infoLabel.setSingleLine(true);
-        c.addView(infoLabel, new LinearLayout.LayoutParams(0, -1, 1));
         return c;
+    }
+
+    // ================================================================ PlayerBar.Host
+    private PlayerBar player;
+
+    @Override public void play() { openPreview(); }
+    @Override public boolean loop() { return loop; }
+    @Override public void toggleLoop() { loop = !loop; refreshAll(); refreshPreviewBar(); }
+    @Override public void toggleOnion() { st.onion = !st.onion; stateChanged(null); }
+
+    @Override public void fpsMenu() {
+        final int[] opts = {6, 8, 10, 12, 15, 24, 25, 30, 48, 60};
+        String[] items = new String[opts.length];
+        for (int i = 0; i < opts.length; i++)
+            items[i] = opts[i] + " fotogramas por segundo" + (opts[i] == doc.fps ? "   ✓" : "")
+                    + (opts[i] == 12 ? "  (dibujo animado clásico)" : opts[i] == 24 ? "  (cine)" : "");
+        new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setTitle("Velocidad")
+                .setItems(items, (d, w) -> setFps(opts[w]))
+                .show();
     }
 
     private TextView keyBtn, blankBtn;
@@ -533,16 +540,6 @@ public final class MotionActivity extends Activity
         });
         col.addView(alphaBar);
 
-        LinearLayout fpsRow = new LinearLayout(this);
-        fpsRow.setGravity(Gravity.CENTER_VERTICAL);
-        fpsRow.setPadding(0, dp(8), 0, 0);
-        fpsRow.addView(Ui.label(this, "Velocidad", 12, 0xFF555555), new LinearLayout.LayoutParams(0, -2, 1));
-        addBtn(fpsRow, "−", "Menos fotogramas por segundo", () -> setFps(doc.fps - 1));
-        fpsLabel = Ui.label(this, "", 13, Ui.INK);
-        fpsLabel.setGravity(Gravity.CENTER);
-        fpsRow.addView(fpsLabel, new LinearLayout.LayoutParams(dp(56), -2));
-        addBtn(fpsRow, "+", "Más fotogramas por segundo", () -> setFps(doc.fps + 1));
-        col.addView(fpsRow);
         return sv;
     }
 
@@ -721,6 +718,7 @@ public final class MotionActivity extends Activity
         if (tl != null) { tl.ensureVisible(pFrame); tl.invalidate(); }
         if (mini != null) mini.invalidate();
         if (stage != null) stage.invalidate();
+        if (player != null) player.invalidate();
         updateInfo();
     }
 
@@ -1292,6 +1290,7 @@ public final class MotionActivity extends Activity
 
     // ================================================================ refrescar la interfaz
     private void refreshAll() {
+        if (player != null) player.invalidate();
         if (stage != null) stage.invalidate();
         if (tl != null) tl.invalidate();
         if (mini != null) mini.invalidate();
@@ -1323,7 +1322,7 @@ public final class MotionActivity extends Activity
             fillSw.set(st.fill, targetFill);
             widthBar.setProgress(Math.round(st.width) - 1);
             widthLabel.setText("Grosor: " + Math.round(st.width));
-            fpsLabel.setText(doc.fps + " fps");
+            if (fpsLabel != null) fpsLabel.setText(doc.fps + " fps");
             selLabel.setText(selN == 0 ? State.NAMES[st.tool] : State.NAMES[st.tool] + "  ·  " + selN
                     + (selN == 1 ? " forma seleccionada" : " formas seleccionadas"));
         }
