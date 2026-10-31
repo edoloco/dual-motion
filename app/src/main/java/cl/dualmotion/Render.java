@@ -1,6 +1,7 @@
 package cl.dualmotion;
 
 import android.graphics.Canvas;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
@@ -82,6 +83,34 @@ public final class Render {
         for (MDoc.Shape s : k.shapes) shape(c, s, tint, outline, hair);
     }
 
+    /** Matriz de la pose: escala y giro alrededor de (px, py), luego traslado. */
+    public static Matrix matrix(MDoc.Pose p, Matrix out) {
+        if (out == null) out = new Matrix();
+        out.reset();
+        out.postTranslate(-p.px, -p.py);
+        out.postScale(p.sx, p.sy);
+        out.postRotate(p.rot);
+        out.postTranslate(p.px + p.tx, p.py + p.ty);
+        return out;
+    }
+
+    private static final Matrix tmpM = new Matrix();
+
+    /** Dibuja la capa en el fotograma f con su transformación y alfa (interpolados si corresponde). */
+    public static void layer(Canvas c, MDoc.Layer L, int f, int tint, int outline, float hair) {
+        MDoc.Pose p = MDoc.pose(L, f);
+        if (p != null) pose(c, p, tint, outline, hair);
+    }
+
+    public static void pose(Canvas c, MDoc.Pose p, int tint, int outline, float hair) {
+        if (p.key.shapes.isEmpty() || p.alpha <= 0) return;
+        int save = p.alpha < 1 && outline == 0 ? c.saveLayerAlpha(null, Math.round(p.alpha * 255)) : c.save();
+        c.concat(matrix(p, tmpM));
+        float sc = Math.max(0.01f, (Math.abs(p.sx) + Math.abs(p.sy)) / 2);
+        key(c, p.key, tint, outline, hair / sc);
+        c.restoreToCount(save);
+    }
+
     /**
      * Dibuja el fotograma f completo (de la capa de abajo hacia arriba).
      * respectVis: no dibuja capas ocultas. hair = grosor de las líneas de contorno (en unidades del documento).
@@ -90,31 +119,38 @@ public final class Render {
         for (int i = d.layers.size() - 1; i >= 0; i--) {
             MDoc.Layer L = d.layers.get(i);
             if (respectVis && !L.vis) continue;
-            key(c, MDoc.keyAt(L, f), 0, outlines && L.out ? L.color : 0, hair);
+            layer(c, L, f, 0, outlines && L.out ? L.color : 0, hair);
         }
     }
 
     public static final int ONION_PREV = 0x99E04848, ONION_NEXT = 0x9930A060;
 
-    /** Papel cebolla: claves anteriores y siguientes (distintas de la actual), teñidos y transparentes. */
+    /**
+     * Papel cebolla: fotogramas anteriores y siguientes que se vean distintos del actual, teñidos y
+     * transparentes (rojo antes, verde después). Sin interpolación, un tramo se dibuja una sola vez.
+     */
     public static void onion(Canvas c, MDoc d, int f, int range, float hair) {
         for (int i = d.layers.size() - 1; i >= 0; i--) {
             MDoc.Layer L = d.layers.get(i);
             if (!L.vis) continue;
-            int cur = MDoc.keyIndex(L, f);
+            MDoc.Pose cur = MDoc.pose(L, f);
             HashSet<Integer> done = new HashSet<>();
-            done.add(cur);
+            if (cur != null && !cur.tweening) done.add(cur.keyFrame);
             for (int k = 1; k <= range; k++) {
                 for (int sgn = -1; sgn <= 1; sgn += 2) {
-                    int g = f + sgn * k;
-                    int ki = MDoc.keyIndex(L, g);
-                    if (ki < 0 || !done.add(ki)) continue;
+                    MDoc.Pose p = MDoc.pose(L, f + sgn * k);
+                    if (p == null) continue;
+                    if (!p.tweening && !done.add(p.keyFrame)) continue;
+                    if (p.tweening && cur != null && cur.tweening && cur.keyFrame == p.keyFrame && same(cur, p)) continue;
                     int a = k == 1 ? 0x99 : 0x55;
-                    int col = withAlpha(sgn < 0 ? ONION_PREV : ONION_NEXT, a);
-                    key(c, L.keys.get(ki), col, 0, hair);
+                    pose(c, p, withAlpha(sgn < 0 ? ONION_PREV : ONION_NEXT, a), 0, hair);
                 }
             }
         }
+    }
+
+    private static boolean same(MDoc.Pose a, MDoc.Pose b) {
+        return a.tx == b.tx && a.ty == b.ty && a.sx == b.sx && a.sy == b.sy && a.rot == b.rot;
     }
 
     static int withAlpha(int c, int a) { return (c & 0x00FFFFFF) | (a << 24); }

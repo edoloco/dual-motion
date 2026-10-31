@@ -75,9 +75,125 @@ public final class MDoc {
     }
 
     // ---------------------------------------------------------------- fotograma clave y capa
+    /**
+     * Fotograma clave: sus formas se mueven juntas como un grupo con una transformación propia
+     * (posición, escala, giro y alfa, alrededor del punto px, py). Con tween = true se interpola hasta el
+     * clave siguiente (interpolación de movimiento), con la curva de aceleración ease y "spin" giros extra.
+     */
     public static final class Key {
         public final ArrayList<Shape> shapes = new ArrayList<>();
-        Key copy() { Key k = new Key(); for (Shape s : shapes) k.shapes.add(s.copy()); return k; }
+        public float tx, ty, sx = 1, sy = 1, rot, alpha = 1, px, py;
+        public boolean tween;
+        /** Curva de aceleración: puntos de control (x1, y1, x2, y2) de una Bézier de (0,0) a (1,1). */
+        public float[] ease = LINEAR.clone();
+        /** Giros completos extra durante la interpolación (+ horario, − antihorario). */
+        public int spin;
+
+        Key copy() {
+            Key k = new Key();
+            for (Shape s : shapes) k.shapes.add(s.copy());
+            k.setPose(this);
+            k.tween = tween; k.ease = ease.clone(); k.spin = spin;
+            return k;
+        }
+
+        void setPose(Key o) {
+            tx = o.tx; ty = o.ty; sx = o.sx; sy = o.sy; rot = o.rot; alpha = o.alpha; px = o.px; py = o.py;
+        }
+
+        public boolean identity() { return tx == 0 && ty == 0 && sx == 1 && sy == 1 && rot == 0; }
+
+        void toJson(JSONObject k) throws JSONException {
+            if (!identity() || alpha != 1) {
+                JSONArray x = new JSONArray();
+                for (float v : new float[]{tx, ty, sx, sy, rot, alpha, px, py}) x.put(Math.round(v * 10000) / 10000.0);
+                k.put("x", x);
+            }
+            if (tween) {
+                k.put("tw", 1);
+                JSONArray e = new JSONArray();
+                for (float v : ease) e.put(Math.round(v * 10000) / 10000.0);
+                k.put("ease", e);
+                if (spin != 0) k.put("spin", spin);
+            }
+        }
+
+        void fromJson(JSONObject k) {
+            JSONArray x = k.optJSONArray("x");
+            if (x != null && x.length() >= 8) {
+                tx = (float) x.optDouble(0); ty = (float) x.optDouble(1);
+                sx = (float) x.optDouble(2, 1); sy = (float) x.optDouble(3, 1);
+                rot = (float) x.optDouble(4); alpha = (float) x.optDouble(5, 1);
+                px = (float) x.optDouble(6); py = (float) x.optDouble(7);
+            }
+            tween = k.optInt("tw") == 1;
+            JSONArray e = k.optJSONArray("ease");
+            if (e != null && e.length() == 4) for (int i = 0; i < 4; i++) ease[i] = (float) e.optDouble(i);
+            spin = k.optInt("spin");
+        }
+    }
+
+    public static final float[] LINEAR = {0.25f, 0.25f, 0.75f, 0.75f};
+
+    // ---------------------------------------------------------------- pose: cómo se ve una capa en un fotograma
+    /** Contenido y transformación de una capa en un fotograma (ya interpolada si hay interpolación). */
+    public static final class Pose {
+        public Key key;          // formas que se dibujan
+        public int keyFrame;     // número del clave de donde vienen
+        public boolean tweening; // true si es un fotograma intermedio de una interpolación
+        public float tx, ty, sx = 1, sy = 1, rot, alpha = 1, px, py;
+    }
+
+    /** Pose de la capa en f, o null si la capa no tiene nada ahí. */
+    public static Pose pose(Layer L, int f) {
+        if (f < 0 || f >= L.len) return null;
+        Map.Entry<Integer, Key> a = L.keys.floorEntry(f);
+        if (a == null) return null;
+        Key A = a.getValue();
+        Pose p = new Pose();
+        p.key = A;
+        p.keyFrame = a.getKey();
+        p.tx = A.tx; p.ty = A.ty; p.sx = A.sx; p.sy = A.sy; p.rot = A.rot; p.alpha = A.alpha; p.px = A.px; p.py = A.py;
+        if (!A.tween || f == a.getKey()) return p;
+        Map.Entry<Integer, Key> b = L.keys.higherEntry(f);
+        if (b == null) return p; // interpolación rota: no hay clave final
+        Key B = b.getValue();
+        float t = (f - a.getKey()) / (float) (b.getKey() - a.getKey());
+        float e = ease(A.ease, t);
+        p.tweening = true;
+        p.tx = lerp(A.tx, B.tx, e); p.ty = lerp(A.ty, B.ty, e);
+        p.sx = lerp(A.sx, B.sx, e); p.sy = lerp(A.sy, B.sy, e);
+        p.rot = lerp(A.rot, B.rot + 360f * A.spin, e);
+        p.alpha = lerp(A.alpha, B.alpha, e);
+        p.px = lerp(A.px, B.px, e); p.py = lerp(A.py, B.py, e);
+        return p;
+    }
+
+    /** ¿La interpolación que empieza en este clave tiene clave final? */
+    public static boolean tweenOk(Layer L, int keyFrame) {
+        Key k = L.keys.get(keyFrame);
+        return k != null && k.tween && L.keys.higherKey(keyFrame) != null;
+    }
+
+    static float lerp(float a, float b, float t) { return a + (b - a) * t; }
+
+    /** Curva de aceleración: Bézier cúbica de (0,0) a (1,1); devuelve y para x = t. */
+    public static float ease(float[] c, float t) {
+        if (t <= 0) return 0;
+        if (t >= 1) return 1;
+        float lo = 0, hi = 1, u = t;
+        for (int i = 0; i < 30; i++) {
+            u = (lo + hi) / 2;
+            float x = bez(c[0], c[2], u);
+            if (Math.abs(x - t) < 1e-5f) break;
+            if (x < t) lo = u; else hi = u;
+        }
+        return bez(c[1], c[3], u);
+    }
+
+    private static float bez(float p1, float p2, float u) {
+        float v = 1 - u;
+        return 3 * v * v * u * p1 + 3 * v * u * u * p2 + u * u * u;
     }
 
     public static final class Layer {
@@ -99,6 +215,7 @@ public final class MDoc {
                 JSONArray ss = new JSONArray();
                 for (Shape s : e.getValue().shapes) ss.put(s.toJson());
                 k.put("s", ss);
+                e.getValue().toJson(k);
                 ks.put(k);
             }
             o.put("keys", ks);
@@ -116,6 +233,7 @@ public final class MDoc {
                 JSONObject k = ks.optJSONObject(i);
                 if (k == null) continue;
                 Key key = new Key();
+                key.fromJson(k);
                 JSONArray ss = k.optJSONArray("s");
                 if (ss != null) for (int j = 0; j < ss.length(); j++) {
                     JSONObject so = ss.optJSONObject(j);
@@ -306,7 +424,14 @@ public final class MDoc {
                 boolean blank = m.optInt("blank") == 1;
                 push(l);
                 Map.Entry<Integer, Key> prev = L.keys.floorEntry(f);
-                L.keys.put(f, blank || prev == null ? new Key() : prev.getValue().copy());
+                Key nk;
+                if (blank || prev == null) nk = new Key();
+                else {
+                    Pose ps = pose(L, f);
+                    nk = prev.getValue().copy();
+                    if (ps != null && ps.tweening) poseInto(ps, nk); // dentro de una interpolación: toma lo interpolado
+                }
+                L.keys.put(f, nk);
                 if (f >= L.len) L.len = f + 1;
                 return true;
             }
@@ -331,6 +456,63 @@ public final class MDoc {
             case "clearKey": { // Mayús+F6: el fotograma pasa a extender el clave anterior
                 if (f == 0 || !L.keys.containsKey(f)) return false;
                 push(l); L.keys.remove(f); return true;
+            }
+            case "xf": { // transformación del clave (posición, escala, giro, alfa, punto de giro)
+                if (f >= L.len) return false;
+                push(l);
+                Key k = L.keys.get(f);
+                if (k == null) {
+                    Pose ps = pose(L, f);
+                    if (ps != null && ps.tweening) { // en medio de una interpolación: crea ahí un clave (como en Flash)
+                        k = ps.key.copy();
+                        poseInto(ps, k);
+                        L.keys.put(f, k);
+                    } else k = L.keys.floorEntry(f).getValue();
+                }
+                if (m.has("x")) k.tx = (float) m.getDouble("x");
+                if (m.has("y")) k.ty = (float) m.getDouble("y");
+                if (m.has("sx")) k.sx = (float) m.getDouble("sx");
+                if (m.has("sy")) k.sy = (float) m.getDouble("sy");
+                if (m.has("r")) k.rot = (float) m.getDouble("r");
+                if (m.has("a")) k.alpha = Math.max(0, Math.min(1, (float) m.getDouble("a")));
+                if (m.has("px")) k.px = (float) m.getDouble("px");
+                if (m.has("py")) k.py = (float) m.getDouble("py");
+                return true;
+            }
+            case "tween": { // crear / quitar interpolación de movimiento en el clave vigente
+                Map.Entry<Integer, Key> e = f < L.len ? L.keys.floorEntry(f) : null;
+                if (e == null) return false;
+                boolean on = m.optBoolean("on", true);
+                if (e.getValue().tween == on) return false;
+                push(l);
+                e.getValue().tween = on;
+                // Flash: si no hay clave final, se crea uno al final del tramo
+                if (on && L.keys.higherKey(e.getKey()) == null) {
+                    int end = L.len - 1;
+                    if (end <= e.getKey()) { end = e.getKey() + Math.max(1, fps) - 1; L.len = end + 1; }
+                    Key b = e.getValue().copy();
+                    b.tween = false;
+                    L.keys.put(end, b);
+                }
+                return true;
+            }
+            case "ease": {
+                Map.Entry<Integer, Key> e = f < L.len ? L.keys.floorEntry(f) : null;
+                JSONArray c = m.optJSONArray("c");
+                if (e == null || c == null || c.length() != 4) return false;
+                push(l);
+                for (int i = 0; i < 4; i++) {
+                    float v = (float) c.optDouble(i);
+                    e.getValue().ease[i] = i % 2 == 0 ? Math.max(0, Math.min(1, v)) : Math.max(-1, Math.min(2, v));
+                }
+                return true;
+            }
+            case "spin": {
+                Map.Entry<Integer, Key> e = f < L.len ? L.keys.floorEntry(f) : null;
+                if (e == null) return false;
+                push(l);
+                e.getValue().spin = clamp(m.optInt("n"), -20, 20);
+                return true;
             }
             case "add": {
                 Shape s = Shape.from(m.getJSONObject("s"));
@@ -378,6 +560,10 @@ public final class MDoc {
             }
         }
         return false;
+    }
+
+    private static void poseInto(Pose p, Key k) {
+        k.tx = p.tx; k.ty = p.ty; k.sx = p.sx; k.sy = p.sy; k.rot = p.rot; k.alpha = p.alpha; k.px = p.px; k.py = p.py;
     }
 
     private static ArrayList<Integer> indices(JSONArray is, int size) {

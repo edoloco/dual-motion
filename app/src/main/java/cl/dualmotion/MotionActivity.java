@@ -63,7 +63,10 @@ public final class MotionActivity extends Activity
     private StageView stage;
     private TimelineView tl;
     private View mini;
-    private TextView connLabel, infoLabel, selLabel, fpsLabel, widthLabel, onionBtn;
+    private TextView connLabel, infoLabel, selLabel, fpsLabel, widthLabel, onionBtn, docLabel;
+    private TextView tweenBtn, spinLabel, alphaLabel;
+    private SeekBar alphaBar;
+    private CurveView curve;
     private SeekBar widthBar;
     private Swatch strokeSw, fillSw;
     private boolean targetFill = true;
@@ -206,9 +209,10 @@ public final class MotionActivity extends Activity
         LinearLayout head = new LinearLayout(this);
         head.setGravity(Gravity.CENTER_VERTICAL);
         head.setPadding(dp(6), 0, dp(6), dp(4));
-        TextView scene = Ui.label(this, "🎬 " + doc.scene, 14, 0xFFFFFFFF);
-        scene.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        head.addView(scene, new LinearLayout.LayoutParams(0, -2, 1));
+        docLabel = Ui.label(this, "", 14, 0xFFFFFFFF);
+        docLabel.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        docLabel.setSingleLine(true);
+        head.addView(docLabel, new LinearLayout.LayoutParams(0, -2, 1));
         connLabel = Ui.label(this, isSolo() ? "Un solo teléfono" : "Buscando el extendido…", 13, 0xFFFFFFFF);
         connLabel.setOnClickListener(v -> connectionDialog());
         head.addView(connLabel);
@@ -285,6 +289,7 @@ public final class MotionActivity extends Activity
         addBtn(c, "○", "Insertar fotograma clave vacío", () -> frameOp("key", true));
         addBtn(c, "＋", "Insertar fotograma", () -> frameOp("frame", false));
         addBtn(c, "－", "Quitar fotograma", () -> frameOp("delFrame", false));
+        addBtn(c, "↝", "Crear / quitar interpolación de movimiento", this::toggleTween);
         gap(c);
         onionBtn = addBtn(c, "◐", "Papel cebolla", () -> {
             st.onion = !st.onion;
@@ -385,6 +390,49 @@ public final class MotionActivity extends Activity
         addBtn(edit2, "☰", "Menú", this::menu);
         col.addView(edit2);
 
+        // ---- interpolación del clave actual
+        TextView secT = Ui.label(this, "Interpolación", 12, 0xFF555555);
+        secT.setPadding(0, dp(12), 0, dp(4));
+        col.addView(secT);
+        tweenBtn = Ui.sym(this, "", "Crear o quitar la interpolación de movimiento", this::toggleTween);
+        tweenBtn.setTextSize(13);
+        col.addView(tweenBtn, new LinearLayout.LayoutParams(-1, dp(40)));
+        TextView easeT = Ui.label(this, "Aceleración (arrastra los puntos naranjos)", 11, 0xFF777777);
+        easeT.setPadding(0, dp(8), 0, dp(2));
+        col.addView(easeT);
+        curve = new CurveView(this);
+        col.addView(curve, new LinearLayout.LayoutParams(-1, dp(130)));
+        LinearLayout pre = new LinearLayout(this);
+        pre.setPadding(0, dp(4), 0, 0);
+        preset(pre, "Lineal", "Velocidad pareja", MDoc.LINEAR);
+        preset(pre, "Entrada", "Parte lento y acelera", new float[]{0.42f, 0, 1, 1});
+        preset(pre, "Salida", "Parte rápido y frena", new float[]{0, 0, 0.58f, 1});
+        preset(pre, "Suave", "Acelera y frena", new float[]{0.42f, 0, 0.58f, 1});
+        col.addView(pre);
+        LinearLayout spinRow = new LinearLayout(this);
+        spinRow.setGravity(Gravity.CENTER_VERTICAL);
+        spinRow.setPadding(0, dp(8), 0, 0);
+        spinRow.addView(Ui.label(this, "Giros", 12, 0xFF555555), new LinearLayout.LayoutParams(0, -2, 1));
+        addBtn(spinRow, "↺", "Un giro más hacia la izquierda", () -> spin(-1));
+        spinLabel = Ui.label(this, "0", 13, Ui.INK);
+        spinLabel.setGravity(Gravity.CENTER);
+        spinRow.addView(spinLabel, new LinearLayout.LayoutParams(dp(40), -2));
+        addBtn(spinRow, "↻", "Un giro más hacia la derecha", () -> spin(1));
+        col.addView(spinRow);
+        alphaLabel = Ui.label(this, "", 12, 0xFF555555);
+        alphaLabel.setPadding(0, dp(8), 0, 0);
+        col.addView(alphaLabel);
+        alphaBar = new SeekBar(this);
+        alphaBar.setMax(100);
+        alphaBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int v, boolean user) { if (user) alphaLabel.setText("Alfa: " + v + " %"); }
+            @Override public void onStartTrackingTouch(SeekBar s) { }
+            @Override public void onStopTrackingTouch(SeekBar s) {
+                request(op("xf", "l", st.layer, "f", st.frame, "a", s.getProgress() / 100.0));
+            }
+        });
+        col.addView(alphaBar);
+
         LinearLayout fpsRow = new LinearLayout(this);
         fpsRow.setGravity(Gravity.CENTER_VERTICAL);
         fpsRow.setPadding(0, dp(8), 0, 0);
@@ -396,6 +444,44 @@ public final class MotionActivity extends Activity
         addBtn(fpsRow, "+", "Más fotogramas por segundo", () -> setFps(doc.fps + 1));
         col.addView(fpsRow);
         return sv;
+    }
+
+    private void preset(LinearLayout row, String name, String hint, final float[] c) {
+        TextView t = Ui.sym(this, name, hint, () -> setEase(c));
+        t.setTextSize(11);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(32), 1);
+        lp.setMargins(dp(1), 0, dp(1), 0);
+        row.addView(t, lp);
+    }
+
+    /** Clave vigente en el fotograma actual de la capa actual (null si la capa ya terminó). */
+    private java.util.Map.Entry<Integer, MDoc.Key> curKeyEntry() {
+        MDoc.Layer L = doc.layer(st.layer);
+        if (L == null || st.frame >= L.len) return null;
+        return L.keys.floorEntry(st.frame);
+    }
+
+    private void toggleTween() {
+        java.util.Map.Entry<Integer, MDoc.Key> e = curKeyEntry();
+        if (e == null) { Ui.toast(this, "Elige un fotograma con dibujo"); return; }
+        if (!e.getValue().tween && e.getValue().shapes.isEmpty()) { Ui.toast(this, "Este fotograma clave está vacío"); return; }
+        request(op("tween", "l", st.layer, "f", st.frame, "on", !e.getValue().tween));
+    }
+
+    private void setEase(float[] c) {
+        java.util.Map.Entry<Integer, MDoc.Key> e = curKeyEntry();
+        if (e == null || !e.getValue().tween) { Ui.toast(this, "Primero crea la interpolación de movimiento"); return; }
+        try {
+            org.json.JSONArray a = new org.json.JSONArray();
+            for (float v : c) a.put((double) v);
+            request(op("ease", "l", st.layer, "f", st.frame, "c", a));
+        } catch (Exception ignored) { }
+    }
+
+    private void spin(int d) {
+        java.util.Map.Entry<Integer, MDoc.Key> e = curKeyEntry();
+        if (e == null || !e.getValue().tween) { Ui.toast(this, "Primero crea la interpolación de movimiento"); return; }
+        request(op("spin", "l", st.layer, "f", st.frame, "n", e.getValue().spin + d));
     }
 
     // ================================================================ vista previa a pantalla completa (principal)
@@ -714,6 +800,19 @@ public final class MotionActivity extends Activity
         }
     }
 
+    // ================================================================ archivos .dmo
+    SharedPreferences prefs() { return prefs; }
+
+    /** Carga un documento abierto (se puede deshacer). En el principal se le pide al extendido. */
+    void loadDoc(JSONObject d) { request(op("load", "doc", d)); }
+
+    @Override protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        Files.onResult(this, req, res, data);
+        hideBars();
+        refreshProps();
+    }
+
     // ================================================================ StageView.Host
     @Override public MDoc doc() { return doc; }
     @Override public State st() { return st; }
@@ -765,8 +864,12 @@ public final class MotionActivity extends Activity
     }
 
     @Override public void frameMenu(final int layer, final int frame) {
+        MDoc.Layer FL = doc.layer(layer);
+        java.util.Map.Entry<Integer, MDoc.Key> ke = FL == null || frame >= FL.len ? null : FL.keys.floorEntry(frame);
+        final boolean tw = ke != null && ke.getValue().tween;
         String[] items = {"Insertar fotograma clave", "Insertar fotograma clave vacío", "Insertar fotograma",
-                "Quitar fotograma", "Quitar fotograma clave"};
+                "Quitar fotograma", "Quitar fotograma clave",
+                tw ? "Quitar interpolación de movimiento" : "Crear interpolación de movimiento"};
         new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
                 .setTitle("Fotograma " + (frame + 1))
                 .setItems(items, (d, w) -> {
@@ -776,6 +879,7 @@ public final class MotionActivity extends Activity
                         case 2: request(op("frame", "l", layer, "f", frame)); break;
                         case 3: request(op("delFrame", "l", layer, "f", frame)); break;
                         case 4: request(op("clearKey", "l", layer, "f", frame)); break;
+                        case 5: request(op("tween", "l", layer, "f", frame, "on", !tw)); break;
                     }
                 }).show();
     }
@@ -800,28 +904,34 @@ public final class MotionActivity extends Activity
 
     // ================================================================ menú
     @Override public void menu() {
-        String[] items = {"Nuevo documento", "Conexión", "Cambiar el papel de este teléfono", "Ver versiones (GitHub)",
-                "Acerca de DUAL Motion"};
+        String[] items = {"Guardar", "Guardar como…", "Abrir…", "Nuevo documento", "Conexión",
+                "Cambiar el papel de este teléfono", "Ver versiones (GitHub)", "Acerca de DUAL Motion"};
         new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
                 .setItems(items, (d, w) -> {
                     switch (w) {
-                        case 0:
+                        case 0: Files.save(this, false); break;
+                        case 1: Files.save(this, true); break;
+                        case 2: Files.open(this); break;
+                        case 3:
                             new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
                                     .setMessage("¿Empezar un documento nuevo? (Se puede deshacer.)")
-                                    .setPositiveButton("Nuevo", (a, b) -> request(op("new")))
+                                    .setPositiveButton("Nuevo", (a, b) -> {
+                                        prefs.edit().remove("docUri").remove("docName").apply();
+                                        request(op("new"));
+                                    })
                                     .setNegativeButton("Cancelar", null).show();
                             break;
-                        case 1: connectionDialog(); break;
-                        case 2:
+                        case 4: connectionDialog(); break;
+                        case 5:
                             prefs.edit().remove("role").apply();
                             if (net != null) net.stop();
                             recreate();
                             break;
-                        case 3:
+                        case 6:
                             try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES))); }
                             catch (Exception e) { Ui.toast(this, RELEASES); }
                             break;
-                        case 4: about(); break;
+                        case 7: about(); break;
                     }
                 }).show();
     }
@@ -889,6 +999,22 @@ public final class MotionActivity extends Activity
     }
 
     private void refreshProps() {
+        if (docLabel != null) docLabel.setText("🎬 " + doc.scene + "  ·  " + prefs.getString("docName", "Sin guardar"));
+        if (tweenBtn != null) {
+            java.util.Map.Entry<Integer, MDoc.Key> e = curKeyEntry();
+            MDoc.Layer L = doc.layer(st.layer);
+            boolean tw = e != null && e.getValue().tween;
+            boolean ok = tw && L != null && MDoc.tweenOk(L, e.getKey());
+            tweenBtn.setText(e == null ? "—" : tw ? (ok ? "↝ Movimiento (toca para quitar)" : "↝ Falta el clave final")
+                    : "Crear interpolación de movimiento");
+            tweenBtn.setTextColor(tw ? 0xFF5E35B1 : Ui.INK);
+            curve.set(e == null ? MDoc.LINEAR : e.getValue().ease, tw);
+            spinLabel.setText(e == null ? "0" : String.valueOf(e.getValue().spin));
+            MDoc.Pose ps = L == null ? null : MDoc.pose(L, st.frame);
+            int a = ps == null ? 100 : Math.round(ps.alpha * 100);
+            alphaBar.setProgress(a);
+            alphaLabel.setText("Alfa: " + a + " %");
+        }
         if (toolBtns != null) for (int i = 0; i < toolBtns.length; i++) toolBtns[i].setOn(i == st.tool);
         if (strokeSw != null) {
             strokeSw.set(st.stroke, !targetFill);
@@ -1032,6 +1158,89 @@ public final class MotionActivity extends Activity
             if (e.getActionMasked() == MotionEvent.ACTION_UP) {
                 int i = (int) (e.getY() / (getHeight() / 2f)) * 7 + (int) (e.getX() / (getWidth() / 7f));
                 if (i >= 0 && i < cols.length) setColor(targetFill, cols[i]);
+            }
+            return true;
+        }
+    }
+
+    /** Editor de la curva de aceleración: Bézier de (0,0) a (1,1) con dos puntos de control. */
+    final class CurveView extends View {
+        final float[] c = MDoc.LINEAR.clone();
+        boolean on;
+        int drag = -1;
+        final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final android.graphics.Path path = new android.graphics.Path();
+
+        CurveView(Context ctx) { super(ctx); }
+
+        void set(float[] e, boolean enabled) {
+            if (drag >= 0) return;
+            System.arraycopy(e, 0, c, 0, 4);
+            on = enabled;
+            invalidate();
+        }
+
+        private float pad() { return dp(12); }
+        private float X(float v) { return pad() + v * (getWidth() - 2 * pad()); }
+        private float Y(float v) { return getHeight() - pad() - (v + 0.25f) / 1.5f * (getHeight() - 2 * pad()); }
+        private float vx(float x) { return (x - pad()) / (getWidth() - 2 * pad()); }
+        private float vy(float y) { return (getHeight() - pad() - y) / (getHeight() - 2 * pad()) * 1.5f - 0.25f; }
+
+        private float bz(float p1, float p2, float u) { float v = 1 - u; return 3 * v * v * u * p1 + 3 * v * u * u * p2 + u * u * u; }
+
+        @Override protected void onDraw(Canvas cv) {
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(0xFFF4F4F4);
+            cv.drawRoundRect(new RectF(0, 0, getWidth(), getHeight()), dp(8), dp(8), p);
+            p.setStyle(Paint.Style.STROKE);
+            p.setStrokeWidth(dp(1));
+            p.setColor(0xFFD0D0D0);
+            cv.drawRect(X(0), Y(1), X(1), Y(0), p);
+            path.reset();
+            for (int i = 0; i <= 48; i++) {
+                float u = i / 48f, x = X(bz(c[0], c[2], u)), y = Y(bz(c[1], c[3], u));
+                if (i == 0) path.moveTo(x, y); else path.lineTo(x, y);
+            }
+            int ink = on ? 0xFF5E35B1 : 0xFFBDBDBD;
+            p.setColor(ink);
+            p.setStrokeWidth(dp(2.5f));
+            cv.drawPath(path, p);
+            p.setStrokeWidth(dp(1.2f));
+            p.setColor(on ? 0xFF9E9E9E : 0xFFDDDDDD);
+            cv.drawLine(X(0), Y(0), X(c[0]), Y(c[1]), p);
+            cv.drawLine(X(1), Y(1), X(c[2]), Y(c[3]), p);
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(on ? Ui.ORANGE : 0xFFDDDDDD);
+            cv.drawCircle(X(c[0]), Y(c[1]), dp(7), p);
+            cv.drawCircle(X(c[2]), Y(c[3]), dp(7), p);
+            if (!on) {
+                p.setColor(0xFF9E9E9E);
+                p.setTextSize(dp(11));
+                String t = "Sin interpolación";
+                cv.drawText(t, getWidth() / 2f - p.measureText(t) / 2, getHeight() / 2f, p);
+            }
+        }
+
+        @Override public boolean onTouchEvent(MotionEvent e) {
+            if (!on) return false;
+            float x = e.getX(), y = e.getY();
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN: {
+                    float d0 = (float) Math.hypot(x - X(c[0]), y - Y(c[1])), d1 = (float) Math.hypot(x - X(c[2]), y - Y(c[3]));
+                    drag = Math.min(d0, d1) < dp(30) ? (d0 <= d1 ? 0 : 1) : -1;
+                    if (drag >= 0) getParent().requestDisallowInterceptTouchEvent(true);
+                    return drag >= 0;
+                }
+                case MotionEvent.ACTION_MOVE:
+                    if (drag < 0) return false;
+                    c[drag * 2] = Math.max(0, Math.min(1, vx(x)));
+                    c[drag * 2 + 1] = Math.max(-0.25f, Math.min(1.25f, vy(y)));
+                    invalidate();
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    if (drag >= 0) { drag = -1; setEase(c.clone()); }
+                    return true;
             }
             return true;
         }

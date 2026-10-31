@@ -118,8 +118,11 @@ public final class TimelineView extends View {
             float x = cellX(f);
             int ki = MDoc.keyIndex(L, f);
             boolean inSpan = ki >= 0;
-            boolean content = inSpan && !L.keys.get(ki).shapes.isEmpty();
-            int bg = inSpan ? (content ? 0xFFD9D9D9 : 0xFFFFFFFF) : ((f + 1) % 5 == 0 ? 0xFFEDEDED : 0xFFF8F8F8);
+            MDoc.Key kk = inSpan ? L.keys.get(ki) : null;
+            boolean content = kk != null && !kk.shapes.isEmpty();
+            boolean tw = kk != null && kk.tween;
+            int bg = inSpan ? (tw ? 0xFFCDC2F2 : content ? 0xFFD9D9D9 : 0xFFFFFFFF)
+                    : ((f + 1) % 5 == 0 ? 0xFFEDEDED : 0xFFF8F8F8);
             p.setStyle(Paint.Style.FILL);
             p.setColor(bg);
             c.drawRect(x, y, x + cellW, y + rowH, p);
@@ -131,12 +134,26 @@ public final class TimelineView extends View {
             if (!inSpan || L.keys.containsKey(f)) c.drawLine(x, y, x, y + rowH, p);
             float mx = x + cellW / 2f, my = y + rowH - 9 * dp;
             int ink = selected ? 0xFFFFFFFF : 0xFF000000;
+            if (tw) { // interpolación de movimiento: flecha hasta el clave siguiente (punteada si falta)
+                Integer nk = L.keys.higherKey(ki);
+                boolean ok = nk != null;
+                p.setColor(ink);
+                p.setStrokeWidth(1.2f * dp);
+                p.setStyle(Paint.Style.STROKE);
+                float x0 = f == ki ? mx + 4 * dp : x, x1 = ok && f == nk - 1 ? x + cellW - 2 * dp : x + cellW;
+                if (ok) c.drawLine(x0, my, x1, my, p);
+                else for (float xx = x0; xx < x1; xx += 4 * dp) c.drawLine(xx, my, Math.min(xx + 2 * dp, x1), my, p);
+                if (ok && f == nk - 1) {
+                    c.drawLine(x1, my, x1 - 4 * dp, my - 3 * dp, p);
+                    c.drawLine(x1, my, x1 - 4 * dp, my + 3 * dp, p);
+                }
+            }
             if (L.keys.containsKey(f)) {
                 p.setColor(ink);
                 p.setStyle(content ? Paint.Style.FILL : Paint.Style.STROKE);
                 p.setStrokeWidth(1.3f * dp);
                 c.drawCircle(mx, my, 3.6f * dp, p);
-            } else if (inSpan && (f == L.len - 1 || L.keys.containsKey(f + 1))) {
+            } else if (inSpan && !tw && (f == L.len - 1 || L.keys.containsKey(f + 1))) {
                 // fin del tramo
                 p.setColor(ink);
                 p.setStyle(Paint.Style.STROKE);

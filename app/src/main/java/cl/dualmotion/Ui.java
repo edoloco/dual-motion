@@ -124,6 +124,20 @@ public final class Ui {
                 p.setStyle(tool == State.SEL ? Paint.Style.FILL_AND_STROKE : Paint.Style.STROKE);
                 c.drawPath(a, p);
                 break;
+            case State.FREE: {
+                p.setStyle(Paint.Style.STROKE);
+                p.setStrokeWidth(1.4f);
+                p.setPathEffect(new android.graphics.DashPathEffect(new float[]{2.2f, 1.8f}, 0));
+                c.drawRect(5, 7, 17, 19, p);
+                p.setPathEffect(null);
+                p.setStyle(Paint.Style.FILL);
+                for (float[] q : new float[][]{{5, 7}, {17, 7}, {5, 19}, {17, 19}, {11, 7}, {11, 19}, {5, 13}, {17, 13}})
+                    c.drawRect(q[0] - 1.6f, q[1] - 1.6f, q[0] + 1.6f, q[1] + 1.6f, p);
+                p.setStyle(Paint.Style.STROKE);
+                p.setStrokeWidth(1.6f);
+                c.drawArc(new RectF(15, 1.5f, 23, 9.5f), 200, 160, false, p);
+                break;
+            }
             case State.PEN:
                 a.moveTo(12, 2.5f); a.lineTo(18, 13); a.lineTo(14.5f, 20.5f); a.lineTo(9.5f, 20.5f); a.lineTo(6, 13); a.close();
                 p.setStyle(Paint.Style.STROKE); c.drawPath(a, p);
