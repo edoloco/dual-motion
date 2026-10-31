@@ -1,0 +1,51 @@
+name: Compilar DUAL Motion
+
+# Cada envío a main compila y publica una versión nueva (APK en Releases).
+# El número sale de la hora de compilación: una versión nueva siempre es "más nueva" que la anterior.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md']   # cambios solo en documentación no publican versión
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Número de versión
+        run: |
+          echo "VERSION_CODE=$(( $(date +%s) / 60 ))" >> $GITHUB_ENV
+          echo "VERSION_NAME=0.$(TZ=America/Santiago date +%y%m%d.%H%M)" >> $GITHUB_ENV
+          echo "NOTA=$(git log -1 --pretty=%s | head -c 300)" >> $GITHUB_ENV
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Compilar
+        run: gradle assembleRelease --no-daemon
+
+      - name: Preparar APK
+        run: cp app/build/outputs/apk/release/*.apk DualMotion.apk
+
+      - name: Publicar
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION_NAME }}
+          name: DUAL Motion ${{ env.VERSION_NAME }}
+          make_latest: true
+          files: DualMotion.apk
+          body: |
+            Versión ${{ env.VERSION_NAME }}. Incluye: ${{ env.NOTA }}
+            DualMotion.apk: la misma app para los dos teléfonos (al abrirla se elige Principal, Extendido o Un solo teléfono).

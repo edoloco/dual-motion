@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- pantalla de arriba (principal) -->
+    <path android:fillColor="#FFFFFF" android:pathData="M28,30 h52 a4,4 0 0 1 4,4 v15 a4,4 0 0 1 -4,4 h-52 a4,4 0 0 1 -4,-4 v-15 a4,4 0 0 1 4,-4 z"/>
+    <!-- línea de tiempo: fotogramas y claves -->
+    <path android:fillColor="#D9D9D9" android:pathData="M30,40 h48 v7 h-48 z"/>
+    <path android:fillColor="#263238" android:pathData="M33,45 m-2,0 a2,2 0 1 0 4,0 a2,2 0 1 0 -4,0"/>
+    <path android:fillColor="#263238" android:pathData="M51,45 m-2,0 a2,2 0 1 0 4,0 a2,2 0 1 0 -4,0"/>
+    <path android:fillColor="#263238" android:pathData="M69,45 m-2,0 a2,2 0 1 0 4,0 a2,2 0 1 0 -4,0"/>
+    <path android:fillColor="#E53935" android:pathData="M56,33 h4 v17 h-4 z"/>
+    <path android:fillColor="#2FA866" android:pathData="M30,34 h20 v3 h-20 z"/>
+    <!-- pantalla de abajo (extendido) -->
+    <path android:fillColor="#FFFFFF" android:pathData="M28,56 h52 a4,4 0 0 1 4,4 v15 a4,4 0 0 1 -4,4 h-52 a4,4 0 0 1 -4,-4 v-15 a4,4 0 0 1 4,-4 z"/>
+    <!-- pelota con estela -->
+    <path android:fillColor="#4D2FA866" android:pathData="M42,70 m-4,0 a4,4 0 1 0 8,0 a4,4 0 1 0 -8,0"/>
+    <path android:fillColor="#882FA866" android:pathData="M53,65 m-5,0 a5,5 0 1 0 10,0 a5,5 0 1 0 -10,0"/>
+    <path android:fillColor="#2FA866" android:pathData="M67,64 m-6,0 a6,6 0 1 0 12,0 a6,6 0 1 0 -12,0"/>
+</vector>

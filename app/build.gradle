@@ -1,0 +1,45 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'cl.dualmotion'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'cl.dualmotion'
+        minSdk 28
+        targetSdk 34
+        // número de versión según la hora de compilación (lo pone GitHub Actions): siempre crece
+        versionCode((System.getenv('VERSION_CODE') ?: '1').toInteger())
+        versionName(System.getenv('VERSION_NAME') ?: '0.1')
+    }
+
+    signingConfigs {
+        // llave fija para que cada versión nueva se instale encima de la anterior
+        fija {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+
+    buildTypes {
+        debug { signingConfig signingConfigs.fija }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.fija
+        }
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

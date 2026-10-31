@@ -1,0 +1,1071 @@
+package cl.dualmotion;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.RectF;
+import android.net.Uri;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.InputType;
+import android.view.Choreographer;
+import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.WindowManager;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.SeekBar;
+import android.widget.TextView;
+
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
+
+/**
+ * DUAL Motion: animación en dos pantallas.
+ *  - "view"  (principal, arriba): herramientas, línea de tiempo y propiedades; la vista previa se ve aquí a
+ *    pantalla completa.
+ *  - "edit"  (extendido, abajo): la mesa de trabajo. Es el dueño del documento: aplica cada orden y la reenvía.
+ *  - "solo"  (un teléfono): todo junto.
+ * Mensajes: mo {op…} (orden aplicada), moFull, moReq (el principal pide una orden), moState (herramienta,
+ * colores, capa, fotograma), moPlay / moTick (reproducción), moCmd, moPick, moSel.
+ */
+public final class MotionActivity extends Activity
+        implements StageView.Host, TimelineView.Host, Net.Listener {
+
+    public static final String VIEW = "view", EDIT = "edit", SOLO = "solo";
+    static final String RELEASES = "https://github.com/edoloco/dual-motion/releases";
+
+    private SharedPreferences prefs;
+    private String role;
+    private final Handler ui = new Handler(Looper.getMainLooper());
+
+    private MDoc doc = new MDoc();
+    private final State st = new State();
+    private Net net;
+    private boolean connected;
+    private int selN;
+
+    private FrameLayout root;
+    private StageView stage;
+    private TimelineView tl;
+    private View mini;
+    private TextView connLabel, infoLabel, selLabel, fpsLabel, widthLabel, onionBtn;
+    private SeekBar widthBar;
+    private Swatch strokeSw, fillSw;
+    private boolean targetFill = true;
+    private Ui.ToolButton[] toolBtns;
+    private FrameLayout previewLayer;
+    private View previewView, previewBar;
+    private TextView previewPlay, previewLoop, previewInfo;
+
+    // ================================================================ ciclo de vida
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b);
+        prefs = getSharedPreferences("dm", MODE_PRIVATE);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        WindowManager.LayoutParams wlp = getWindow().getAttributes();
+        wlp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        getWindow().setAttributes(wlp);
+        String r = getIntent().getStringExtra("role");
+        if (r == null) r = prefs.getString("role", null);
+        if (r == null) { chooseRole(); return; }
+        start(r);
+    }
+
+    private void start(String r) {
+        role = r;
+        if (!isView()) loadAutosave();
+        if (!isEdit()) restoreState();
+        if (isEdit()) buildEdit(); else buildMain();
+        if (isEdit()) { net = new Net(this, this); net.startHost(); }
+        else if (isView()) { net = new Net(this, this); net.startClient(prefs.getString("ip", null)); }
+        refreshAll();
+    }
+
+    private boolean isView() { return VIEW.equals(role); }
+    private boolean isEdit() { return EDIT.equals(role); }
+    private boolean isSolo() { return SOLO.equals(role); }
+
+    @Override protected void onResume() { super.onResume(); hideBars(); }
+
+    @Override public void onWindowFocusChanged(boolean f) { super.onWindowFocusChanged(f); if (f) hideBars(); }
+
+    @Override protected void onPause() {
+        super.onPause();
+        if (role == null) return;
+        if (!isView()) { ui.removeCallbacks(saveR); writeAutosave(doc.toJson().toString()); }
+        if (!isEdit()) saveState();
+    }
+
+    @Override protected void onDestroy() {
+        super.onDestroy();
+        stopPlay(false);
+        if (net != null) net.stop();
+    }
+
+    @Override public void onBackPressed() {
+        if (previewLayer != null && previewLayer.getVisibility() == View.VISIBLE) { closePreview(); return; }
+        super.onBackPressed();
+    }
+
+    @SuppressWarnings("deprecation")
+    private void hideBars() {
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+    }
+
+    private int dp(float v) { return Ui.dp(this, v); }
+
+    // ================================================================ elegir el papel de este teléfono
+    private void chooseRole() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER);
+        box.setBackgroundColor(Ui.WORK);
+        box.setPadding(dp(24), dp(16), dp(24), dp(16));
+        TextView t = Ui.label(this, "DUAL Motion", 30, 0xFFFFFFFF);
+        t.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        t.setGravity(Gravity.CENTER);
+        box.addView(t);
+        TextView q = Ui.label(this, "¿Qué es este teléfono?", 16, 0xFFFFFFFF);
+        q.setGravity(Gravity.CENTER);
+        q.setPadding(0, dp(4), 0, dp(16));
+        box.addView(q);
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER);
+        row.addView(roleCard("Principal", "Arriba: herramientas, línea de tiempo y vista previa", VIEW, true));
+        row.addView(roleCard("Extendido", "Abajo: la mesa de trabajo para dibujar", EDIT, false));
+        row.addView(roleCard("Un solo teléfono", "Todo junto en esta pantalla", SOLO, false));
+        box.addView(row);
+        setContentView(box);
+    }
+
+    private View roleCard(String title, String sub, final String r, boolean orange) {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setGravity(Gravity.CENTER);
+        c.setPadding(dp(16), dp(18), dp(16), dp(18));
+        Ui.panel(c, orange ? Ui.orange(this) : Ui.glass(this));
+        TextView a = Ui.label(this, title, 20, orange ? 0xFFFFFFFF : Ui.INK);
+        a.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        a.setGravity(Gravity.CENTER);
+        TextView b = Ui.label(this, sub, 13, orange ? 0xFFFFFFFF : 0xFF555555);
+        b.setGravity(Gravity.CENTER);
+        c.addView(a);
+        c.addView(b);
+        c.setOnClickListener(v -> { prefs.edit().putString("role", r).apply(); recreate(); });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(200), dp(130));
+        lp.setMargins(dp(8), 0, dp(8), 0);
+        c.setLayoutParams(lp);
+        return c;
+    }
+
+    // ================================================================ armar pantallas
+    /** Extendido: solo la mesa de trabajo. */
+    private void buildEdit() {
+        root = new FrameLayout(this);
+        root.setBackgroundColor(Ui.WORK);
+        stage = new StageView(this, this);
+        root.addView(stage, new FrameLayout.LayoutParams(-1, -1));
+        setContentView(root);
+    }
+
+    /** Principal y modo solo: herramientas | línea de tiempo (+ mesa en solo) | propiedades. */
+    private void buildMain() {
+        root = new FrameLayout(this);
+        root.setBackgroundColor(Ui.WORK);
+        LinearLayout row = new LinearLayout(this);
+        row.setPadding(dp(8), dp(8), dp(8), dp(8));
+        root.addView(row, new FrameLayout.LayoutParams(-1, -1));
+
+        row.addView(buildTools(), new LinearLayout.LayoutParams(dp(104), -1));
+
+        LinearLayout center = new LinearLayout(this);
+        center.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(0, -1, 1);
+        clp.setMargins(dp(8), 0, dp(8), 0);
+        row.addView(center, clp);
+
+        // encabezado: escena, conexión
+        LinearLayout head = new LinearLayout(this);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.setPadding(dp(6), 0, dp(6), dp(4));
+        TextView scene = Ui.label(this, "🎬 " + doc.scene, 14, 0xFFFFFFFF);
+        scene.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        head.addView(scene, new LinearLayout.LayoutParams(0, -2, 1));
+        connLabel = Ui.label(this, isSolo() ? "Un solo teléfono" : "Buscando el extendido…", 13, 0xFFFFFFFF);
+        connLabel.setOnClickListener(v -> connectionDialog());
+        head.addView(connLabel);
+        center.addView(head);
+
+        // línea de tiempo
+        tl = new TimelineView(this, this);
+        FrameLayout tlBox = new FrameLayout(this);
+        Ui.panel(tlBox, Ui.glass(this));
+        tlBox.setPadding(dp(2), dp(2), dp(2), dp(2));
+        tlBox.addView(tl, new FrameLayout.LayoutParams(-1, -1));
+        center.addView(tlBox, new LinearLayout.LayoutParams(-1, 0, isSolo() ? 0.42f : 1));
+
+        center.addView(buildControls(), lpMargins(-1, dp(46), 0, dp(6), 0, 0));
+
+        if (isSolo()) {
+            stage = new StageView(this, this);
+            FrameLayout sBox = new FrameLayout(this);
+            Ui.panel(sBox, Ui.glass(this));
+            sBox.addView(stage, new FrameLayout.LayoutParams(-1, -1));
+            LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, 0, 0.58f);
+            slp.setMargins(0, dp(6), 0, 0);
+            center.addView(sBox, slp);
+        }
+
+        row.addView(buildProps(), new LinearLayout.LayoutParams(dp(206), -1));
+
+        buildPreview();
+        setContentView(root);
+    }
+
+    private static LinearLayout.LayoutParams lpMargins(int w, int h, int l, int t, int r, int b) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(w, h);
+        lp.setMargins(l, t, r, b);
+        return lp;
+    }
+
+    private View buildTools() {
+        ScrollView sv = new ScrollView(this);
+        Ui.panel(sv, Ui.orange(this));
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(4), dp(6), dp(4), dp(6));
+        sv.addView(col);
+        toolBtns = new Ui.ToolButton[State.TOOLS];
+        LinearLayout line = null;
+        for (int i = 0; i < State.TOOLS; i++) {
+            if (i % 2 == 0) {
+                line = new LinearLayout(this);
+                col.addView(line, new LinearLayout.LayoutParams(-1, dp(46)));
+            }
+            final int tool = i;
+            Ui.ToolButton tb = new Ui.ToolButton(this, i);
+            tb.setOnClickListener(v -> setTool(tool));
+            toolBtns[i] = tb;
+            line.addView(tb, new LinearLayout.LayoutParams(0, -1, 1));
+        }
+        return sv;
+    }
+
+    private View buildControls() {
+        LinearLayout c = new LinearLayout(this);
+        c.setGravity(Gravity.CENTER_VERTICAL);
+        c.setPadding(dp(6), dp(4), dp(6), dp(4));
+        Ui.panel(c, Ui.glass(this));
+        addBtn(c, "⇤", "Primer fotograma", () -> select(st.layer, 0));
+        addBtn(c, "‹", "Fotograma anterior", () -> select(st.layer, Math.max(0, st.frame - 1)));
+        TextView play = addBtn(c, "▶", "Vista previa (pantalla completa)", this::openPreview);
+        play.setTextColor(Ui.GREEN);
+        addBtn(c, "›", "Fotograma siguiente", () -> select(st.layer, st.frame + 1));
+        addBtn(c, "⇥", "Último fotograma", () -> select(st.layer, doc.length() - 1));
+        gap(c);
+        addBtn(c, "●", "Insertar fotograma clave", () -> frameOp("key", false));
+        addBtn(c, "○", "Insertar fotograma clave vacío", () -> frameOp("key", true));
+        addBtn(c, "＋", "Insertar fotograma", () -> frameOp("frame", false));
+        addBtn(c, "－", "Quitar fotograma", () -> frameOp("delFrame", false));
+        gap(c);
+        onionBtn = addBtn(c, "◐", "Papel cebolla", () -> {
+            st.onion = !st.onion;
+            stateChanged(null);
+        });
+        infoLabel = Ui.label(this, "", 12, 0xFF555555);
+        infoLabel.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        infoLabel.setSingleLine(true);
+        c.addView(infoLabel, new LinearLayout.LayoutParams(0, -1, 1));
+        return c;
+    }
+
+    private TextView addBtn(LinearLayout parent, String sym, String name, Runnable r) {
+        TextView t = Ui.sym(this, sym, name, r);
+        parent.addView(t, lpMargins(dp(38), dp(36), dp(2), 0, dp(2), 0));
+        return t;
+    }
+
+    private void gap(LinearLayout parent) { parent.addView(new View(this), new LinearLayout.LayoutParams(dp(8), 1)); }
+
+    private View buildProps() {
+        ScrollView sv = new ScrollView(this);
+        Ui.panel(sv, Ui.glass(this));
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(10), dp(10), dp(10), dp(10));
+        sv.addView(col);
+
+        mini = new View(this) {
+            final Paint stageP = new Paint();
+            final Paint bg = new Paint(Paint.ANTI_ALIAS_FLAG);
+            final RectF box = new RectF();
+            @Override protected void onDraw(Canvas c) {
+                stageP.setColor(0xFFFFFFFF);
+                bg.setColor(0xFFB0B0B0);
+                box.set(0, 0, getWidth(), getHeight());
+                c.drawRoundRect(box, dp(8), dp(8), bg);
+                box.inset(dp(4), dp(4));
+                Render.fitted(c, doc, shownFrame(), box, stageP);
+            }
+        };
+        mini.setOnClickListener(v -> openPreview());
+        col.addView(mini, new LinearLayout.LayoutParams(-1, dp(104)));
+
+        selLabel = Ui.label(this, "", 12, 0xFF555555);
+        selLabel.setPadding(0, dp(4), 0, dp(6));
+        col.addView(selLabel);
+
+        // trazo y relleno
+        LinearLayout colors = new LinearLayout(this);
+        colors.setGravity(Gravity.CENTER_VERTICAL);
+        strokeSw = new Swatch(this, State.PENCIL);
+        fillSw = new Swatch(this, State.BUCKET);
+        strokeSw.setOnClickListener(v -> { if (!targetFill) pickColor(false); targetFill = false; refreshProps(); });
+        fillSw.setOnClickListener(v -> { if (targetFill) pickColor(true); targetFill = true; refreshProps(); });
+        strokeSw.setOnLongClickListener(v -> { Ui.toast(this, "Color del trazo (toca dos veces para elegir)"); return true; });
+        fillSw.setOnLongClickListener(v -> { Ui.toast(this, "Color del relleno (toca dos veces para elegir)"); return true; });
+        colors.addView(strokeSw, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        colors.addView(new View(this), new LinearLayout.LayoutParams(dp(8), 1));
+        colors.addView(fillSw, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        TextView swap = Ui.sym(this, "⇄", "Intercambiar trazo y relleno", () -> {
+            int a = st.stroke; st.stroke = st.fill; st.fill = a;
+            refreshProps();
+            stateChanged(null);
+        });
+        colors.addView(swap, lpMargins(dp(40), dp(40), dp(8), 0, 0, 0));
+        col.addView(colors);
+
+        col.addView(new Palette(this), lpMargins(-1, dp(56), 0, dp(8), 0, 0));
+
+        widthLabel = Ui.label(this, "", 12, 0xFF555555);
+        widthLabel.setPadding(0, dp(8), 0, 0);
+        col.addView(widthLabel);
+        widthBar = new SeekBar(this);
+        widthBar.setMax(39);
+        widthBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int v, boolean user) {
+                if (!user) return;
+                st.width = v + 1;
+                widthLabel.setText("Grosor: " + (v + 1));
+            }
+            @Override public void onStartTrackingTouch(SeekBar s) { }
+            @Override public void onStopTrackingTouch(SeekBar s) { stateChanged("w"); }
+        });
+        col.addView(widthBar);
+
+        LinearLayout edit = new LinearLayout(this);
+        edit.setPadding(0, dp(8), 0, 0);
+        addBtn(edit, "↶", "Deshacer", () -> request(op("undo")));
+        addBtn(edit, "↷", "Rehacer", () -> request(op("redo")));
+        addBtn(edit, "✕", "Borrar lo seleccionado", () -> cmd("delSel"));
+        addBtn(edit, "▲", "Traer al frente", () -> cmd("front"));
+        col.addView(edit);
+        LinearLayout edit2 = new LinearLayout(this);
+        edit2.setPadding(0, dp(4), 0, 0);
+        addBtn(edit2, "▼", "Enviar al fondo", () -> cmd("back"));
+        addBtn(edit2, "⤢", "Ajustar la mesa a la pantalla", () -> cmd("fit"));
+        addBtn(edit2, "☰", "Menú", this::menu);
+        col.addView(edit2);
+
+        LinearLayout fpsRow = new LinearLayout(this);
+        fpsRow.setGravity(Gravity.CENTER_VERTICAL);
+        fpsRow.setPadding(0, dp(8), 0, 0);
+        fpsRow.addView(Ui.label(this, "Velocidad", 12, 0xFF555555), new LinearLayout.LayoutParams(0, -2, 1));
+        addBtn(fpsRow, "−", "Menos fotogramas por segundo", () -> setFps(doc.fps - 1));
+        fpsLabel = Ui.label(this, "", 13, Ui.INK);
+        fpsLabel.setGravity(Gravity.CENTER);
+        fpsRow.addView(fpsLabel, new LinearLayout.LayoutParams(dp(56), -2));
+        addBtn(fpsRow, "+", "Más fotogramas por segundo", () -> setFps(doc.fps + 1));
+        col.addView(fpsRow);
+        return sv;
+    }
+
+    // ================================================================ vista previa a pantalla completa (principal)
+    private void buildPreview() {
+        previewLayer = new FrameLayout(this);
+        previewLayer.setBackgroundColor(0xFF000000);
+        previewLayer.setVisibility(View.GONE);
+        previewView = new View(this) {
+            final Paint stageP = new Paint();
+            final RectF box = new RectF();
+            @Override protected void onDraw(Canvas c) {
+                stageP.setColor(0xFFFFFFFF);
+                box.set(0, 0, getWidth(), getHeight());
+                Render.fitted(c, doc, shownFrame(), box, stageP);
+            }
+        };
+        previewView.setOnClickListener(v ->
+                previewBar.setVisibility(previewBar.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE));
+        previewLayer.addView(previewView, new FrameLayout.LayoutParams(-1, -1));
+
+        LinearLayout bar = new LinearLayout(this);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(10), dp(6), dp(10), dp(6));
+        Ui.panel(bar, Ui.glass(this));
+        addBtn(bar, "✕", "Cerrar la vista previa", this::closePreview);
+        previewPlay = addBtn(bar, "❚❚", "Reproducir / pausar", () -> {
+            if (playing) pausePreview(); else resumePreview();
+        });
+        previewLoop = addBtn(bar, "⟲", "Repetir", () -> { loop = !loop; refreshPreviewBar(); });
+        previewInfo = Ui.label(this, "", 13, Ui.INK);
+        previewInfo.setPadding(dp(10), 0, dp(6), 0);
+        bar.addView(previewInfo);
+        previewBar = bar;
+        FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(-2, dp(52), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        blp.bottomMargin = dp(14);
+        previewLayer.addView(bar, blp);
+        root.addView(previewLayer, new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    private void openPreview() {
+        previewLayer.setVisibility(View.VISIBLE);
+        previewBar.setVisibility(View.VISIBLE);
+        int from = st.frame >= doc.length() - 1 ? 0 : st.frame;
+        startPlay(from);
+        sendPlay(true, from);
+        refreshPreviewBar();
+    }
+
+    private void pausePreview() {
+        stopPlay(true);
+        sendPlay(false, st.frame);
+        stateChanged(null);
+        refreshPreviewBar();
+    }
+
+    private void resumePreview() {
+        int from = st.frame >= doc.length() - 1 ? 0 : st.frame;
+        startPlay(from);
+        sendPlay(true, from);
+        refreshPreviewBar();
+    }
+
+    private void closePreview() {
+        if (playing) pausePreview();
+        previewLayer.setVisibility(View.GONE);
+        hideBars();
+        refreshAll();
+    }
+
+    private void refreshPreviewBar() {
+        if (previewPlay == null) return;
+        previewPlay.setText(playing ? "❚❚" : "▶");
+        previewLoop.setTextColor(loop ? Ui.GREEN : 0xFF9E9E9E);
+        int f = shownFrame();
+        previewInfo.setText(String.format(Locale.US, "%d / %d  ·  %d fps", f + 1, doc.length(), doc.fps));
+    }
+
+    // ================================================================ reproducción
+    private boolean playing, loop = true;
+    private int pf0, pFrame;
+    private long pt0, lastTick;
+
+    private final Choreographer.FrameCallback tick = new Choreographer.FrameCallback() {
+        @Override public void doFrame(long now) {
+            if (!playing) return;
+            int len = doc.length();
+            long el = Math.max(0, now - pt0);
+            int f = pf0 + (int) (el * doc.fps / 1_000_000_000L);
+            if (f >= len) {
+                if (loop) f %= len;
+                else { pFrame = len - 1; stopPlay(true); if (isView()) { sendPlay(false, st.frame); stateChanged(null); } refreshAll(); refreshPreviewBar(); return; }
+            }
+            if (f != pFrame) { pFrame = f; onPlayFrame(); }
+            if (isView() && System.currentTimeMillis() - lastTick > 1000) {
+                lastTick = System.currentTimeMillis();
+                send("moTick", "f", pFrame);
+            }
+            Choreographer.getInstance().postFrameCallback(this);
+        }
+    };
+
+    private void startPlay(int from) {
+        stopPlay(false);
+        playing = true;
+        pf0 = pFrame = Math.max(0, Math.min(from, doc.length() - 1));
+        pt0 = System.nanoTime();
+        lastTick = System.currentTimeMillis();
+        if (stage != null) stage.toolChanged();
+        Choreographer.getInstance().postFrameCallback(tick);
+        onPlayFrame();
+    }
+
+    /** Detiene; keep = el cabezal queda donde se detuvo. */
+    private void stopPlay(boolean keep) {
+        if (!playing) return;
+        playing = false;
+        Choreographer.getInstance().removeFrameCallback(tick);
+        if (keep) st.frame = pFrame;
+        refreshAll();
+    }
+
+    private void onPlayFrame() {
+        if (previewView != null && previewLayer.getVisibility() == View.VISIBLE) { previewView.invalidate(); refreshPreviewBar(); }
+        if (tl != null) { tl.ensureVisible(pFrame); tl.invalidate(); }
+        if (mini != null) mini.invalidate();
+        if (stage != null) stage.invalidate();
+        updateInfo();
+    }
+
+    private void sendPlay(boolean on, int f) {
+        JSONObject m = new JSONObject();
+        try { m.put("t", "moPlay"); m.put("on", on); m.put("f", f); } catch (JSONException ignored) { }
+        sendRaw(m);
+    }
+
+    // ================================================================ estado y órdenes
+    private JSONObject op(String name) {
+        JSONObject o = new JSONObject();
+        try { o.put("op", name); } catch (JSONException ignored) { }
+        return o;
+    }
+
+    private JSONObject op(String name, Object... kv) {
+        JSONObject o = op(name);
+        try { for (int i = 0; i + 1 < kv.length; i += 2) o.put((String) kv[i], kv[i + 1]); } catch (JSONException ignored) { }
+        return o;
+    }
+
+    /** Pide una orden: en solo se aplica aquí; en el principal se le pide al extendido (dueño del documento). */
+    private void request(JSONObject o) {
+        if (isView()) {
+            if (!connected) { Ui.toast(this, "Sin conexión con el extendido"); return; }
+            JSONObject m = new JSONObject();
+            try { m.put("t", "moReq"); m.put("op", o); } catch (JSONException ignored) { }
+            sendRaw(m);
+        } else {
+            if (stage != null) stage.clearSel();
+            submit(o);
+        }
+    }
+
+    /** StageView y modo solo: aplica la orden y (en el extendido) la reenvía al principal, en orden. */
+    @Override public void submit(JSONObject o) {
+        if (!doc.apply(o)) return;
+        if (isEdit()) {
+            try {
+                JSONObject m = new JSONObject(o.toString());
+                m.put("t", "mo");
+                sendRaw(m);
+            } catch (JSONException ignored) { }
+        }
+        scheduleSave();
+        docChanged();
+    }
+
+    private void docChanged() {
+        clampState();
+        refreshAll();
+    }
+
+    private void clampState() {
+        st.layer = Math.max(0, Math.min(st.layer, doc.layers.size() - 1));
+        st.frame = Math.max(0, st.frame);
+    }
+
+    /** El principal (o el modo solo) cambió herramienta, color, capa, fotograma…; ap = qué aplicar a la selección. */
+    private void stateChanged(String ap) {
+        refreshAll();
+        if (isSolo()) {
+            if (ap != null && stage != null) stage.styleSelection(ap);
+            return;
+        }
+        if (isView()) {
+            JSONObject m = st.toJson();
+            try { m.put("t", "moState"); if (ap != null) m.put("ap", ap); } catch (JSONException ignored) { }
+            sendRaw(m);
+        }
+    }
+
+    private void setTool(int t) {
+        st.tool = t;
+        if (stage != null) stage.toolChanged();
+        stateChanged(null);
+    }
+
+    private void frameOp(String name, boolean blank) {
+        JSONObject o = op(name, "l", st.layer, "f", st.frame);
+        if (blank) try { o.put("blank", 1); } catch (JSONException ignored) { }
+        request(o);
+    }
+
+    private void setFps(int v) { request(op("fps", "v", Math.max(1, Math.min(60, v)))); }
+
+    /** Acciones sobre la selección, que vive en la mesa (extendido). */
+    private void cmd(String c) {
+        if (stage != null) {
+            switch (c) {
+                case "delSel": stage.deleteSelection(); break;
+                case "front": stage.orderSelection(true); break;
+                case "back": stage.orderSelection(false); break;
+                case "fit": stage.fit(); break;
+            }
+            return;
+        }
+        if (!connected) { Ui.toast(this, "Sin conexión con el extendido"); return; }
+        send("moCmd", "c", c);
+    }
+
+    private void setColor(boolean fill, int color) {
+        if (fill) st.fill = color; else st.stroke = color;
+        refreshProps();
+        stateChanged(fill ? "f" : "s");
+    }
+
+    // ================================================================ red
+    private void sendRaw(JSONObject m) { if (net != null) net.send(m); }
+
+    private void send(String t, Object... kv) {
+        JSONObject m = new JSONObject();
+        try {
+            m.put("t", t);
+            for (int i = 0; i + 1 < kv.length; i += 2) m.put((String) kv[i], kv[i + 1]);
+        } catch (JSONException ignored) { }
+        sendRaw(m);
+    }
+
+    @Override public void onState(boolean on, String info) {
+        connected = on;
+        if (isEdit()) {
+            if (on) {
+                JSONObject m = new JSONObject();
+                try { m.put("t", "moFull"); m.put("doc", doc.toJson()); } catch (JSONException ignored) { }
+                sendRaw(m);
+            }
+        } else if (isView()) {
+            if (on) stateChanged(null);
+        }
+        refreshAll();
+    }
+
+    @Override public void onMessage(JSONObject m) {
+        switch (m.optString("t")) {
+            // ---- llegan al principal
+            case "mo":
+                if (doc.apply(m)) docChanged();
+                break;
+            case "moFull": {
+                JSONObject d = m.optJSONObject("doc");
+                if (d != null) doc.load(d);
+                clampState();
+                stateChanged(null);
+                break;
+            }
+            case "moPick":
+                st.stroke = m.optInt("sc", st.stroke);
+                st.fill = m.optInt("fc", st.fill);
+                st.width = (float) m.optDouble("sw", st.width);
+                refreshProps();
+                break;
+            case "moSel":
+                selN = m.optInt("n");
+                refreshProps();
+                break;
+            // ---- llegan al extendido
+            case "moReq": {
+                JSONObject o = m.optJSONObject("op");
+                if (o != null && stage != null) { stage.clearSel(); submit(o); }
+                break;
+            }
+            case "moState": {
+                int oldTool = st.tool;
+                st.from(m);
+                if (stage != null) {
+                    if (oldTool != st.tool) stage.toolChanged();
+                    String ap = m.optString("ap", "");
+                    if (!ap.isEmpty()) stage.styleSelection(ap);
+                }
+                refreshAll();
+                break;
+            }
+            case "moPlay":
+                if (m.optBoolean("on")) startPlay(m.optInt("f"));
+                else { stopPlay(false); st.frame = m.optInt("f", st.frame); refreshAll(); }
+                break;
+            case "moTick":
+                if (playing) {
+                    int f = m.optInt("f"), len = doc.length();
+                    int diff = ((f - pFrame) % len + len) % len;
+                    if (diff > len / 2) diff -= len;
+                    if (Math.abs(diff) > 1) { pf0 = f; pt0 = System.nanoTime(); pFrame = f; onPlayFrame(); }
+                }
+                break;
+            case "moCmd":
+                cmd(m.optString("c"));
+                break;
+        }
+    }
+
+    // ================================================================ StageView.Host
+    @Override public MDoc doc() { return doc; }
+    @Override public State st() { return st; }
+    @Override public int shownFrame() { return playing ? pFrame : st.frame; }
+    @Override public boolean playing() { return playing; }
+
+    @Override public void picked(int stroke, int fill, float width) {
+        st.stroke = stroke; st.fill = fill; st.width = width;
+        if (isEdit()) send("moPick", "sc", stroke, "fc", fill, "sw", (double) width);
+        Ui.toast(this, "Colores tomados");
+        refreshProps();
+    }
+
+    @Override public void selChanged(int n) {
+        selN = n;
+        if (isEdit()) send("moSel", "n", n);
+        else refreshProps();
+    }
+
+    @Override public String status() {
+        MDoc.Layer L = doc.layer(st.layer);
+        String s = (L == null ? "—" : L.name) + "  ·  Fotograma " + (shownFrame() + 1);
+        if (L != null && L.lock) s += "  ·  🔒";
+        if (isEdit()) s += connected ? "  ·  ● Principal" : "  ·  ○ Sin principal";
+        return s;
+    }
+
+    // ================================================================ TimelineView.Host
+    @Override public void select(int layer, int frame) {
+        if (playing) return;
+        st.layer = Math.max(0, Math.min(layer, doc.layers.size() - 1));
+        st.frame = Math.max(0, frame);
+        if (tl != null) tl.ensureVisible(st.frame);
+        stateChanged(null);
+    }
+
+    @Override public void toggle(int layer, String which) {
+        MDoc.Layer L = doc.layer(layer);
+        if (L == null) return;
+        boolean v = "vis".equals(which) ? !L.vis : "lock".equals(which) ? !L.lock : !L.out;
+        request(op("layer", "l", layer, which, v));
+    }
+
+    @Override public void addLayer() { request(op("layerAdd", "at", st.layer)); }
+
+    @Override public void delLayer() {
+        if (doc.layers.size() <= 1) { Ui.toast(this, "Debe quedar al menos una capa"); return; }
+        request(op("layerDel", "l", st.layer));
+    }
+
+    @Override public void frameMenu(final int layer, final int frame) {
+        String[] items = {"Insertar fotograma clave", "Insertar fotograma clave vacío", "Insertar fotograma",
+                "Quitar fotograma", "Quitar fotograma clave"};
+        new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setTitle("Fotograma " + (frame + 1))
+                .setItems(items, (d, w) -> {
+                    switch (w) {
+                        case 0: request(op("key", "l", layer, "f", frame)); break;
+                        case 1: request(op("key", "l", layer, "f", frame, "blank", 1)); break;
+                        case 2: request(op("frame", "l", layer, "f", frame)); break;
+                        case 3: request(op("delFrame", "l", layer, "f", frame)); break;
+                        case 4: request(op("clearKey", "l", layer, "f", frame)); break;
+                    }
+                }).show();
+    }
+
+    @Override public void rename(final int layer) {
+        MDoc.Layer L = doc.layer(layer);
+        if (L == null) return;
+        final EditText e = new EditText(this);
+        e.setText(L.name);
+        e.setSingleLine(true);
+        e.setSelectAllOnFocus(true);
+        new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setTitle("Nombre de la capa")
+                .setView(e)
+                .setPositiveButton("Listo", (d, w) -> {
+                    String n = e.getText().toString().trim();
+                    if (!n.isEmpty()) request(op("layer", "l", layer, "name", n));
+                })
+                .setNegativeButton("Cancelar", null)
+                .show();
+    }
+
+    // ================================================================ menú
+    @Override public void menu() {
+        String[] items = {"Nuevo documento", "Conexión", "Cambiar el papel de este teléfono", "Ver versiones (GitHub)",
+                "Acerca de DUAL Motion"};
+        new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setItems(items, (d, w) -> {
+                    switch (w) {
+                        case 0:
+                            new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                                    .setMessage("¿Empezar un documento nuevo? (Se puede deshacer.)")
+                                    .setPositiveButton("Nuevo", (a, b) -> request(op("new")))
+                                    .setNegativeButton("Cancelar", null).show();
+                            break;
+                        case 1: connectionDialog(); break;
+                        case 2:
+                            prefs.edit().remove("role").apply();
+                            if (net != null) net.stop();
+                            recreate();
+                            break;
+                        case 3:
+                            try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES))); }
+                            catch (Exception e) { Ui.toast(this, RELEASES); }
+                            break;
+                        case 4: about(); break;
+                    }
+                }).show();
+    }
+
+    private void about() {
+        String v = "?";
+        try { v = getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception ignored) { }
+        new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setTitle("DUAL Motion " + v)
+                .setMessage("Animación en dos pantallas.\nArriba: herramientas y línea de tiempo.\n"
+                        + "Abajo: la mesa de trabajo.\n\nPapel de este teléfono: " + roleName())
+                .setPositiveButton("Listo", null).show();
+    }
+
+    private String roleName() { return isView() ? "Principal" : isEdit() ? "Extendido" : "Un solo teléfono"; }
+
+    private void connectionDialog() {
+        if (isSolo()) { Ui.toast(this, "Modo un solo teléfono: no usa conexión"); return; }
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(8), dp(20), 0);
+        String txt = "Este teléfono: " + roleName() + "\nIP en el WiFi: " + Net.localIp() + "\nEstado: "
+                + (connected ? "conectado con " + (net != null ? net.peer() : "") : "sin conexión");
+        box.addView(Ui.label(this, txt, 15, Ui.INK));
+        final EditText ip = new EditText(this);
+        if (isView()) {
+            TextView h = Ui.label(this, "\nSi no se encuentran solos, escribe la IP del extendido:", 13, 0xFF555555);
+            box.addView(h);
+            ip.setHint("192.168.0.10");
+            ip.setInputType(InputType.TYPE_CLASS_PHONE);
+            ip.setText(prefs.getString("ip", ""));
+            box.addView(ip);
+        }
+        AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setTitle("Conexión").setView(box).setNegativeButton("Cerrar", null);
+        if (isView()) b.setPositiveButton("Conectar", (d, w) -> {
+            String s = ip.getText().toString().trim();
+            prefs.edit().putString("ip", s).apply();
+            if (!s.isEmpty() && net != null) net.connectTo(s);
+        });
+        b.show();
+    }
+
+    private void pickColor(final boolean fill) {
+        final AlertDialog[] dlg = new AlertDialog[1];
+        ColorGrid g = new ColorGrid(this, c -> { setColor(fill, c); if (dlg[0] != null) dlg[0].dismiss(); });
+        FrameLayout box = new FrameLayout(this);
+        box.setPadding(dp(12), dp(8), dp(12), 0);
+        box.addView(g, new FrameLayout.LayoutParams(dp(18 * 18), dp(18 * 13)));
+        dlg[0] = new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setTitle(fill ? "Color del relleno" : "Color del trazo")
+                .setView(box)
+                .setNeutralButton("Sin color", (d, w) -> setColor(fill, 0))
+                .setNegativeButton("Cancelar", null)
+                .show();
+    }
+
+    // ================================================================ refrescar la interfaz
+    private void refreshAll() {
+        if (stage != null) stage.invalidate();
+        if (tl != null) tl.invalidate();
+        if (mini != null) mini.invalidate();
+        refreshProps();
+        updateInfo();
+    }
+
+    private void refreshProps() {
+        if (toolBtns != null) for (int i = 0; i < toolBtns.length; i++) toolBtns[i].setOn(i == st.tool);
+        if (strokeSw != null) {
+            strokeSw.set(st.stroke, !targetFill);
+            fillSw.set(st.fill, targetFill);
+            widthBar.setProgress(Math.round(st.width) - 1);
+            widthLabel.setText("Grosor: " + Math.round(st.width));
+            fpsLabel.setText(doc.fps + " fps");
+            selLabel.setText(selN == 0 ? State.NAMES[st.tool] : State.NAMES[st.tool] + "  ·  " + selN
+                    + (selN == 1 ? " forma seleccionada" : " formas seleccionadas"));
+        }
+        if (onionBtn != null) onionBtn.setTextColor(st.onion ? Ui.ORANGE : Ui.INK);
+        if (connLabel != null && isView())
+            connLabel.setText(connected ? "● Conectado con el extendido" : "○ Buscando el extendido…  (toca para ver)");
+    }
+
+    private void updateInfo() {
+        if (infoLabel == null) return;
+        int f = shownFrame();
+        infoLabel.setText(String.format(Locale.US, "%d  ·  %d fps  ·  %.1f s", f + 1, doc.fps, f / (float) doc.fps)
+                .replace('.', ','));
+    }
+
+    // ================================================================ guardar
+    private final Runnable saveR = () -> {
+        final String json = doc.toJson().toString();
+        new Thread(() -> writeAutosave(json)).start();
+    };
+
+    private void scheduleSave() {
+        ui.removeCallbacks(saveR);
+        ui.postDelayed(saveR, 1500);
+    }
+
+    private File autosaveFile() { return new File(getFilesDir(), "actual.json"); }
+
+    private synchronized void writeAutosave(String json) {
+        try {
+            File tmp = new File(getFilesDir(), "actual.json.tmp");
+            try (FileOutputStream o = new FileOutputStream(tmp)) { o.write(json.getBytes(StandardCharsets.UTF_8)); }
+            //noinspection ResultOfMethodCallIgnored
+            tmp.renameTo(autosaveFile());
+        } catch (Exception ignored) { }
+    }
+
+    private void loadAutosave() {
+        File f = autosaveFile();
+        if (!f.exists()) return;
+        try (FileInputStream in = new FileInputStream(f)) {
+            byte[] b = new byte[(int) f.length()];
+            int n = 0;
+            while (n < b.length) { int r = in.read(b, n, b.length - n); if (r < 0) break; n += r; }
+            doc.load(new JSONObject(new String(b, 0, n, StandardCharsets.UTF_8)));
+        } catch (Exception ignored) { }
+    }
+
+    private void saveState() {
+        prefs.edit().putInt("tool", st.tool).putInt("sc", st.stroke).putInt("fc", st.fill)
+                .putFloat("sw", st.width).putBoolean("onion", st.onion).apply();
+    }
+
+    private void restoreState() {
+        st.tool = prefs.getInt("tool", st.tool);
+        st.stroke = prefs.getInt("sc", st.stroke);
+        st.fill = prefs.getInt("fc", st.fill);
+        st.width = prefs.getFloat("sw", st.width);
+        st.onion = prefs.getBoolean("onion", false);
+    }
+
+    // ================================================================ piezas pequeñas
+    /** Muestra de color de trazo o relleno; con borde naranja la que está activa. */
+    final class Swatch extends View {
+        final int iconTool;
+        int color;
+        boolean target;
+        final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final RectF r = new RectF();
+
+        Swatch(Context c, int iconTool) { super(c); this.iconTool = iconTool; }
+
+        void set(int c, boolean t) { color = c; target = t; invalidate(); }
+
+        @Override protected void onDraw(Canvas c) {
+            float pad = dp(3);
+            r.set(pad, pad, getWidth() - pad, getHeight() - pad);
+            drawColorCell(c, r, color, p, dp(8));
+            p.setStyle(Paint.Style.STROKE);
+            p.setStrokeWidth(target ? dp(3) : dp(1));
+            p.setColor(target ? Ui.ORANGE : 0xFF9E9E9E);
+            c.drawRoundRect(r, dp(8), dp(8), p);
+            // ícono pequeño en la esquina
+            float s = dp(16);
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(0xEEFFFFFF);
+            c.drawCircle(getWidth() - s / 2 - dp(2), getHeight() - s / 2 - dp(2), s / 2 + dp(1), p);
+            c.save();
+            c.translate(getWidth() - s - dp(2), getHeight() - s - dp(2));
+            c.scale(s / 24f, s / 24f);
+            Ui.icon(c, iconTool, Ui.INK, p);
+            c.restore();
+        }
+    }
+
+    static void drawColorCell(Canvas c, RectF r, int color, Paint p, float radius) {
+        p.setStyle(Paint.Style.FILL);
+        if (color == 0) {
+            p.setColor(0xFFFFFFFF);
+            c.drawRoundRect(r, radius, radius, p);
+            p.setColor(Ui.RED);
+            p.setStyle(Paint.Style.STROKE);
+            p.setStrokeWidth(Math.max(2, r.width() / 14));
+            c.drawLine(r.left + r.width() * 0.2f, r.bottom - r.height() * 0.2f,
+                    r.right - r.width() * 0.2f, r.top + r.height() * 0.2f, p);
+        } else {
+            p.setColor(color);
+            c.drawRoundRect(r, radius, radius, p);
+        }
+    }
+
+    /** Colores rápidos: se aplican al trazo o al relleno, según cuál esté activo. */
+    final class Palette extends View {
+        final int[] cols = {0, 0xFF000000, 0xFF666666, 0xFFFFFFFF, 0xFFE53935, 0xFFF57C1F, 0xFFFDD835,
+                0xFF2FA866, 0xFF00897B, 0xFF2F7BE0, 0xFF3949AB, 0xFF8E44AD, 0xFFEC407A, 0xFF795548};
+        final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final RectF r = new RectF();
+
+        Palette(Context c) { super(c); }
+
+        @Override protected void onDraw(Canvas c) {
+            float cw = getWidth() / 7f, ch = getHeight() / 2f;
+            for (int i = 0; i < cols.length; i++) {
+                r.set((i % 7) * cw + dp(2), (i / 7) * ch + dp(2), (i % 7 + 1) * cw - dp(2), (i / 7 + 1) * ch - dp(2));
+                drawColorCell(c, r, cols[i], p, dp(5));
+                p.setStyle(Paint.Style.STROKE);
+                p.setStrokeWidth(dp(1));
+                p.setColor(0x33000000);
+                c.drawRoundRect(r, dp(5), dp(5), p);
+            }
+        }
+
+        @Override public boolean onTouchEvent(MotionEvent e) {
+            if (e.getActionMasked() == MotionEvent.ACTION_UP) {
+                int i = (int) (e.getY() / (getHeight() / 2f)) * 7 + (int) (e.getX() / (getWidth() / 7f));
+                if (i >= 0 && i < cols.length) setColor(targetFill, cols[i]);
+            }
+            return true;
+        }
+    }
+
+    /** Cuadrícula de 216 colores (como el panel de muestras clásico) más una fila de grises. */
+    static final class ColorGrid extends View {
+        interface Pick { void pick(int color); }
+        final Pick pick;
+        final Paint p = new Paint();
+
+        ColorGrid(Context c, Pick pick) { super(c); this.pick = pick; }
+
+        static int colorAt(int col, int row) {
+            if (row == 12) { int v = Math.round(col * 255f / 17f); return 0xFF000000 | (v << 16) | (v << 8) | v; }
+            int r = (row / 6) * 3 + col / 6, g = row % 6, b = col % 6;
+            return 0xFF000000 | (r * 51 << 16) | (g * 51 << 8) | (b * 51);
+        }
+
+        @Override protected void onDraw(Canvas c) {
+            float cw = getWidth() / 18f, ch = getHeight() / 13f;
+            for (int row = 0; row < 13; row++)
+                for (int col = 0; col < 18; col++) {
+                    p.setColor(colorAt(col, row));
+                    c.drawRect(col * cw, row * ch + (row == 12 ? ch * 0.15f : 0), (col + 1) * cw - 1, (row + 1) * ch - 1, p);
+                }
+        }
+
+        @Override public boolean onTouchEvent(MotionEvent e) {
+            if (e.getActionMasked() == MotionEvent.ACTION_UP) {
+                int col = (int) (e.getX() / (getWidth() / 18f)), row = (int) (e.getY() / (getHeight() / 13f));
+                if (col >= 0 && col < 18 && row >= 0 && row < 13) pick.pick(colorAt(col, row));
+            }
+            return true;
+        }
+    }
+}
