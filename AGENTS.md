@@ -108,7 +108,12 @@ La zona pasa a ser una forma de relleno sin trazo (con huecos por `Shape.sub`, p
 rellenos que cubre (orden `fillArea {l,f,s,at,rm}`, un solo paso de deshacer): repintar una zona la cambia entera,
 sin dejar borde. Si cubre justo un relleno, solo le cambia el color. Tocar sobre una línea no hace nada. Las
 opciones aparecen en el panel derecho del principal al elegir el cubo.
-Bote de tinta, Cuentagotas, Borrador (borra formas enteras), Mano.
+Pincel (como en Flash pinta RELLENO: el trazo pasa a imagen y vuelve como forma de relleno sin línea, `Brush.paint`;
+modos `State.brushMode`: Normal, Pintar rellenos = bajo las líneas, Pintar detrás, Pintar dentro = recortado al
+relleno donde empieza; va con la orden `fillArea`), Borrador (borra por donde pasa, como un pincel, `Brush.erase`:
+a los rellenos se les resta el trazo y las líneas se cortan donde pasa; modos `State.eraseMode`: Normal, Solo
+rellenos, Solo líneas, Grifo = figura entera; orden `replace {l,f,rep:[{i,ss}]}`, un solo deshacer; no borra
+símbolos), Bote de tinta, Cuentagotas, Borrador (borra formas enteras), Mano.
 
 ## Símbolos gráficos
 

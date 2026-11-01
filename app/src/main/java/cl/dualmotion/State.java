@@ -24,6 +24,8 @@ public final class State {
      *  mira todas las capas o solo la actual. */
     public int tol = 40, gap = 2;
     public boolean fillAll;
+    /** Modos del pincel y del borrador (ver Brush), como en Flash. */
+    public int brushMode, eraseMode;
     /**
      * Edición de un símbolo en el lugar: sym = id del símbolo ("" = la escena). layer y frame son entonces los
      * del símbolo; pl, pf, pi dicen dónde está la instancia por la que se entró (capa, fotograma y forma en la
@@ -39,6 +41,7 @@ public final class State {
         try {
             o.put("tool", tool); o.put("sc", stroke); o.put("fc", fill); o.put("sw", (double) width);
             o.put("l", layer); o.put("f", frame); o.put("on", onion); o.put("gap", gap); o.put("tol", tol); o.put("fa", fillAll);
+            o.put("bm", brushMode); o.put("em", eraseMode);
             o.put("sym", sym); o.put("pl", pl); o.put("pf", pf); o.put("pi", pi);
         } catch (JSONException ignored) { }
         return o;
@@ -55,6 +58,8 @@ public final class State {
         gap = o.optInt("gap", gap);
         tol = o.optInt("tol", tol);
         fillAll = o.optBoolean("fa", fillAll);
+        brushMode = o.optInt("bm", brushMode);
+        eraseMode = o.optInt("em", eraseMode);
         sym = o.optString("sym", "");
         pl = o.optInt("pl"); pf = o.optInt("pf"); pi = o.optInt("pi");
     }

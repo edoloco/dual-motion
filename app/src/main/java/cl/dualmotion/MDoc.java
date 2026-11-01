@@ -869,6 +869,29 @@ public final class MDoc {
                 k.shapes.add(at, ns);
                 return true;
             }
+            case "replace": { // borrador: cada figura tocada se cambia por lo que queda de ella (puede ser nada)
+                Key k = shown(L, f);
+                JSONArray rep = m.optJSONArray("rep");
+                if (k == null || rep == null || rep.length() == 0) return false;
+                ArrayList<int[]> order = new ArrayList<>();
+                for (int i = 0; i < rep.length(); i++) {
+                    JSONObject e = rep.optJSONObject(i);
+                    if (e != null && e.optInt("i", -1) >= 0 && e.optInt("i") < k.shapes.size()) order.add(new int[]{e.optInt("i"), i});
+                }
+                if (order.isEmpty()) return false;
+                push(pl);
+                k = editAt(L, f);
+                Collections.sort(order, (x, y) -> y[0] - x[0]);
+                for (int[] o : order) {
+                    JSONArray ss = rep.getJSONObject(o[1]).optJSONArray("ss");
+                    k.shapes.remove(o[0]);
+                    if (ss != null) for (int j = ss.length() - 1; j >= 0; j--) {
+                        Shape ns = Shape.from(ss.getJSONObject(j));
+                        if (ns.count() > 0) k.shapes.add(o[0], ns);
+                    }
+                }
+                return true;
+            }
             case "set": {
                 Key k = shown(L, f);
                 JSONArray is = m.optJSONArray("is"), ss = m.optJSONArray("ss");

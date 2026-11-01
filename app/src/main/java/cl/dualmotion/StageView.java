@@ -663,7 +663,10 @@ public final class StageView extends View {
                 return;
             case State.ERASER:
                 if (!editable()) return;
-                eraseAt(x, y);
+                if (st.eraseMode == Brush.E_FAUCET) { eraseAt(x, y); return; }
+                pts = new ArrayList<>();
+                pts.add(new float[]{x, y});
+                temp = eraserPreview();
                 return;
             case State.BUCKET: case State.INK: case State.DROPPER:
                 return; // actúan al soltar
@@ -692,9 +695,31 @@ public final class StageView extends View {
                 if (Math.hypot(x - last[0], y - last[1]) * s >= 2 * dp) { pts.add(new float[]{x, y}); freehandShape(); }
                 return;
             case State.ERASER:
-                if (!blocked) eraseAt(x, y);
+                if (blocked) return;
+                if (st.eraseMode == Brush.E_FAUCET) { eraseAt(x, y); return; }
+                if (pts == null) return;
+                float[] le = pts.get(pts.size() - 1);
+                if (Math.hypot(x - le[0], y - le[1]) * s >= 2 * dp) { pts.add(new float[]{x, y}); temp = eraserPreview(); }
         }
     }
+
+    /** Ancho del pincel y del borrador (en unidades del documento). */
+    private float brushWidth() { return host.st().width * 3 + 2; }
+
+    /** Muestra por dónde pasa el borrador (franja translúcida). */
+    private MDoc.Shape eraserPreview() {
+        MDoc.Shape e = new MDoc.Shape();
+        e.n = Render.smooth(pts, 0.6f);
+        if (pts.size() == 1) { float[] q = pts.get(0); e.n = new float[]{q[0], q[1], q[0], q[1], q[0], q[1]}; }
+        e.stroke = 0x66E53935;
+        e.width = brushWidth() + 2;
+        e.brush = true;
+        e.dirty();
+        return e;
+    }
+
+    /** Píxeles de pantalla por unidad de la capa (para la resolución del pincel y el borrador). */
+    private float pxPerUnit() { return s * poseScale(curPose()); }
 
     private void up(float x, float y) {
         State st = host.st();
@@ -747,7 +772,22 @@ public final class StageView extends View {
                 if (temp != null && dragged) { buildPrimitive(st.tool); submitAdd(temp); }
                 temp = null;
                 return;
-            case State.PENCIL: case State.BRUSH:
+            case State.BRUSH:
+                if (pts != null) {
+                    pts.add(new float[]{x, y});
+                    MDoc.Key bk = curKey();
+                    int col = st.fill != 0 ? st.fill : (st.stroke != 0 ? st.stroke : 0xFF000000);
+                    Brush.Paint1 r = bk == null ? null : Brush.paint(bk, pts, brushWidth(), col, st.brushMode, pxPerUnit());
+                    if (r != null && r.shape != null) {
+                        JSONObject o = op("fillArea");
+                        try { o.put("s", r.shape.toJson()); o.put("at", r.at); o.put("rm", new JSONArray()); } catch (JSONException ignored) { }
+                        host.submit(o);
+                        validateSel();
+                    } else if (r != null && r.error != null) Ui.toast(getContext(), r.error);
+                }
+                pts = null; temp = null;
+                return;
+            case State.PENCIL:
                 if (pts != null) {
                     pts.add(new float[]{x, y});
                     freehandShape();
@@ -756,6 +796,32 @@ public final class StageView extends View {
                 pts = null; temp = null;
                 return;
             case State.ERASER:
+                if (st.eraseMode != Brush.E_FAUCET) {
+                    if (pts != null && !blocked) {
+                        pts.add(new float[]{x, y});
+                        MDoc.Key ek = curKey();
+                        Brush.Cut cut = ek == null ? null : Brush.erase(ek, pts, brushWidth(), st.eraseMode, pxPerUnit());
+                        if (cut != null && !cut.index.isEmpty()) {
+                            JSONObject o = op("replace");
+                            try {
+                                JSONArray rep = new JSONArray();
+                                for (int j = 0; j < cut.index.size(); j++) {
+                                    JSONObject e = new JSONObject();
+                                    e.put("i", cut.index.get(j));
+                                    JSONArray ss = new JSONArray();
+                                    for (MDoc.Shape part : cut.parts.get(j)) ss.put(part.toJson());
+                                    e.put("ss", ss);
+                                    rep.put(e);
+                                }
+                                o.put("rep", rep);
+                            } catch (JSONException ignored) { }
+                            host.submit(o);
+                            validateSel();
+                        }
+                    }
+                    pts = null; temp = null;
+                    return;
+                }
                 if (!erasing.isEmpty()) {
                     JSONObject o = op("del");
                     try { o.put("is", new JSONArray(new ArrayList<>(erasing))); } catch (JSONException ignored) { }

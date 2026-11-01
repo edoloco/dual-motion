@@ -386,6 +386,35 @@ public final class MotionActivity extends Activity
         return bucketBox;
     }
 
+    // ---- modos del pincel y del borrador (como en Flash)
+    private LinearLayout brushBox, eraseBox;
+    private TextView[] brushBtns, eraseBtns;
+
+    private LinearLayout modeBox(String title, String[] names, final boolean brush) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(0, dp(8), 0, 0);
+        box.addView(Ui.label(this, title, 12, 0xFF555555));
+        TextView[] btns = new TextView[names.length];
+        LinearLayout row = null;
+        for (int i = 0; i < names.length; i++) {
+            if (i % 2 == 0) { row = new LinearLayout(this); box.addView(row); }
+            final int mode = i;
+            TextView t = Ui.sym(this, names[i], names[i], () -> {
+                if (brush) st.brushMode = mode; else st.eraseMode = mode;
+                prefs.edit().putInt(brush ? "brushMode" : "eraseMode", mode).apply();
+                stateChanged(null);
+            });
+            t.setTextSize(11);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(34), 1);
+            lp.setMargins(dp(1), dp(3), dp(1), 0);
+            row.addView(t, lp);
+            btns[i] = t;
+        }
+        if (brush) brushBtns = btns; else eraseBtns = btns;
+        return box;
+    }
+
     private void setFillOpts(int tol, int gap, boolean all) {
         st.tol = Math.max(0, Math.min(120, tol));
         st.gap = Math.max(0, Math.min(8, gap));
@@ -526,6 +555,10 @@ public final class MotionActivity extends Activity
 
         col.addView(new Palette(this), lpMargins(-1, dp(56), 0, dp(8), 0, 0));
         col.addView(buildBucketBox());
+        brushBox = modeBox("Modo del pincel", Brush.BRUSH_MODES, true);
+        col.addView(brushBox);
+        eraseBox = modeBox("Modo del borrador", Brush.ERASE_MODES, false);
+        col.addView(eraseBox);
 
         widthLabel = Ui.label(this, "", 12, 0xFF555555);
         widthLabel.setPadding(0, dp(8), 0, 0);
@@ -1539,6 +1572,12 @@ public final class MotionActivity extends Activity
 
     private void refreshProps() {
         refreshKeyButtons();
+        if (brushBox != null) {
+            brushBox.setVisibility(st.tool == State.BRUSH ? View.VISIBLE : View.GONE);
+            eraseBox.setVisibility(st.tool == State.ERASER ? View.VISIBLE : View.GONE);
+            for (int i = 0; i < brushBtns.length; i++) brushBtns[i].setTextColor(i == st.brushMode ? Ui.ORANGE : Ui.INK);
+            for (int i = 0; i < eraseBtns.length; i++) eraseBtns[i].setTextColor(i == st.eraseMode ? Ui.ORANGE : Ui.INK);
+        }
         if (bucketBox != null) {
             bucketBox.setVisibility(st.tool == State.BUCKET ? View.VISIBLE : View.GONE);
             tolL.setText("Tolerancia " + st.tol);
@@ -1643,6 +1682,8 @@ public final class MotionActivity extends Activity
         st.tol = prefs.getInt("fillTol", 40);
         st.gap = prefs.getInt("fillGap", 2);
         st.fillAll = prefs.getBoolean("fillAll", false);
+        st.brushMode = prefs.getInt("brushMode", 0);
+        st.eraseMode = prefs.getInt("eraseMode", 0);
     }
 
     // ================================================================ piezas pequeñas
