@@ -85,7 +85,10 @@ Las dos pantallas son UNA: lo repartido se comporta como un solo elemento.
 `clipSplit {l,i,t}` (clip `c = {s, at, in, len, v}` en ms). Las capas de sonido (`Layer.audio`) solo aceptan
 órdenes `clip*` y `layer`; no alargan la animación (`length()` mira solo las de dibujo).
 Dibujar en un fotograma después del final de la capa crea ahí un clave vacío (como en Flash).
-`tween` sin clave final crea uno al final del tramo (o 1 s después). `xf` o F6 en medio de una interpolación crean
+Interpolación como en Flash 8: va del clave del tramo al **siguiente fotograma clave**, que es la referencia (lo
+que se anima hacia él). En la línea de tiempo el tramo violeta incluye el clave final y la flecha sale del punto
+del clave inicial y llega con la punta al punto del clave final (punteada si falta). `tween` sin clave final crea
+uno al final del tramo (o 1 s después) y el principal lleva el cabezal ahí (`createTween`). `xf` o F6 en medio de una interpolación crean
 ahí un clave con la pose interpolada.
 
 ## Herramientas (etapa 1)

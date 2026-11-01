@@ -663,6 +663,8 @@ public final class MDoc {
                     if (ps != null && ps.tweening) poseInto(ps, nk); // dentro de una interpolación: toma lo interpolado
                     advance(nk, f - prev.getKey());
                 }
+                // si el clave nuevo queda al final y no hay otro después, no hay hacia dónde interpolar
+                if (nk.tween && L.keys.higherKey(f) == null && f >= L.len - 1) nk.tween = false;
                 L.keys.put(f, nk);
                 if (f >= L.len) L.len = f + 1;
                 return true;
@@ -725,6 +727,7 @@ public final class MDoc {
                     if (end <= e.getKey()) { end = e.getKey() + Math.max(1, fps) - 1; L.len = end + 1; }
                     Key b = e.getValue().copy();
                     b.tween = false;
+                    advance(b, end - e.getKey()); // un símbolo en ciclo sigue su paso en el clave final
                     L.keys.put(end, b);
                 }
                 return true;

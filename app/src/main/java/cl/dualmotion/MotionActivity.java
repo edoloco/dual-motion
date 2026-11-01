@@ -619,7 +619,31 @@ public final class MotionActivity extends Activity
         java.util.Map.Entry<Integer, MDoc.Key> e = curKeyEntry();
         if (e == null) { Ui.toast(this, "Elige un fotograma con dibujo"); return; }
         if (!e.getValue().tween && e.getValue().shapes.isEmpty()) { Ui.toast(this, "Este fotograma clave está vacío"); return; }
-        request(op("tween", "l", st.layer, "f", st.frame, "on", !e.getValue().tween));
+        if (e.getValue().tween) request(op("tween", "l", st.layer, "f", st.frame, "on", false));
+        else createTween(st.layer, st.frame);
+    }
+
+    /**
+     * Interpolación de movimiento como en Flash 8: va desde el clave del tramo hasta el SIGUIENTE fotograma clave,
+     * que es la referencia (lo que se anima hacia él). Si no hay clave siguiente, se crea uno al final del tramo
+     * (o un segundo después) y el cabezal se lleva ahí para mover o transformar el objeto.
+     */
+    private void createTween(int layer, int frame) {
+        MDoc.Layer L = lay(layer);
+        java.util.Map.Entry<Integer, MDoc.Key> e = L == null || frame >= L.len ? null : L.keys.floorEntry(frame);
+        if (e == null) { Ui.toast(this, "Elige un fotograma con dibujo"); return; }
+        Integer nk = L.keys.higherKey(e.getKey());
+        int end;
+        boolean made = nk == null;
+        if (!made) end = nk;
+        else {
+            end = L.len - 1;
+            if (end <= e.getKey()) end = e.getKey() + Math.max(1, doc.fps) - 1;
+        }
+        request(op("tween", "l", layer, "f", frame, "on", true));
+        select(layer, end);
+        Ui.toast(this, (made ? "Se creó el fotograma clave final en el " : "La interpolación llega al fotograma clave ")
+                + (end + 1) + ": mueve o transforma ahí el objeto");
     }
 
     private void setEase(float[] c) {
@@ -1295,7 +1319,10 @@ public final class MotionActivity extends Activity
                         case 2: request(op("frame", "l", layer, "f", frame)); break;
                         case 3: request(op("delFrame", "l", layer, "f", frame)); break;
                         case 4: request(op("clearKey", "l", layer, "f", frame)); break;
-                        case 5: request(op("tween", "l", layer, "f", frame, "on", !tw)); break;
+                        case 5:
+                            if (tw) request(op("tween", "l", layer, "f", frame, "on", false));
+                            else createTween(layer, frame);
+                            break;
                     }
                 }).show();
     }

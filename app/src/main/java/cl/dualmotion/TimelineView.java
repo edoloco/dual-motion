@@ -132,7 +132,10 @@ public final class TimelineView extends View {
             MDoc.Key kk = inSpan ? L.keys.get(ki) : null;
             boolean content = kk != null && !kk.shapes.isEmpty();
             boolean tw = kk != null && kk.tween;
-            int bg = inSpan ? (tw ? 0xFFCDC2F2 : content ? 0xFFD9D9D9 : 0xFFFFFFFF)
+            // como en Flash 8: el tramo interpolado va de clave a clave, el clave final incluido (es la referencia)
+            Integer pk = L.keys.containsKey(f) ? L.keys.lowerKey(f) : null;
+            boolean tweenEnd = pk != null && L.keys.get(pk).tween;
+            int bg = inSpan ? (tw || tweenEnd ? 0xFFCDC2F2 : content ? 0xFFD9D9D9 : 0xFFFFFFFF)
                     : ((f + 1) % 5 == 0 ? 0xFFEDEDED : 0xFFF8F8F8);
             p.setStyle(Paint.Style.FILL);
             p.setColor(bg);
@@ -145,19 +148,20 @@ public final class TimelineView extends View {
             if (!inSpan || L.keys.containsKey(f)) c.drawLine(x, y, x, y + rowH, p);
             float mx = x + cellW / 2f, my = y + rowH - 9 * dp;
             int ink = selected ? 0xFFFFFFFF : 0xFF000000;
-            if (tw) { // interpolación de movimiento: flecha hasta el clave siguiente (punteada si falta)
-                Integer nk = L.keys.higherKey(ki);
-                boolean ok = nk != null;
-                p.setColor(ink);
-                p.setStrokeWidth(1.2f * dp);
-                p.setStyle(Paint.Style.STROKE);
-                float x0 = f == ki ? mx + 4 * dp : x, x1 = ok && f == nk - 1 ? x + cellW - 2 * dp : x + cellW;
+            p.setColor(ink);
+            p.setStrokeWidth(1.2f * dp);
+            p.setStyle(Paint.Style.STROKE);
+            if (tw) { // interpolación de movimiento: la flecha sale del punto del clave (punteada si falta el clave final)
+                boolean ok = L.keys.higherKey(ki) != null;
+                float x0 = f == ki ? mx + 4 * dp : x, x1 = x + cellW;
                 if (ok) c.drawLine(x0, my, x1, my, p);
                 else for (float xx = x0; xx < x1; xx += 4 * dp) c.drawLine(xx, my, Math.min(xx + 2 * dp, x1), my, p);
-                if (ok && f == nk - 1) {
-                    c.drawLine(x1, my, x1 - 4 * dp, my - 3 * dp, p);
-                    c.drawLine(x1, my, x1 - 4 * dp, my + 3 * dp, p);
-                }
+            }
+            if (tweenEnd) { // y llega con la punta justo al punto del clave final
+                float x1 = mx - 4.5f * dp;
+                c.drawLine(x, my, x1, my, p);
+                c.drawLine(x1, my, x1 - 4 * dp, my - 3 * dp, p);
+                c.drawLine(x1, my, x1 - 4 * dp, my + 3 * dp, p);
             }
             if (L.keys.containsKey(f)) {
                 p.setColor(ink);

@@ -687,7 +687,7 @@ public final class StageView extends View {
                 long now = System.currentTimeMillis();
                 if (!dragged) {
                     int hitI = moving && sel.size() >= 1 ? lastHit : -1;
-                    boolean dbl = now - lastTap < 380 && hitI == lastTapI;
+                    boolean dbl = now - lastTap < 450 && hitI == lastTapI;
                     lastTap = now; lastTapI = hitI;
                     if (dbl) {
                         MDoc.Key k = curKey();
