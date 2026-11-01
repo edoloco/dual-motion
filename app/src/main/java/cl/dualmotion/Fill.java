@@ -9,109 +9,135 @@ import android.graphics.RectF;
 import java.util.ArrayList;
 
 /**
- * Cubo de pintura como en Flash: rellena el área encerrada por los trazos alrededor del punto tocado, aunque la
- * figura se haya hecho a mano (lápiz, pincel) o con varias líneas. Los trazos se pasan a una imagen, se inunda
- * desde el toque y el área encontrada se convierte en una forma de relleno (vectorial, con huecos si los hay).
- * "gap" cierra huecos pequeños entre trazos (como "cerrar huecos" de Flash).
+ * Cubo de pintura: rellena la zona del color tocado (con tolerancia), cerrando huecos entre las líneas, como el
+ * balde de DUAL-Draw; la zona se convierte en una forma de relleno vectorial (con huecos si los hay) que va detrás
+ * de las líneas y reemplaza a los rellenos que cubre.
  */
 final class Fill {
     private Fill() { }
 
+    /** Opciones del cubo (como el balde de DUAL-Draw). */
+    static final class Opts {
+        int tol = 40;        // cuánto puede variar el color y seguir siendo "la misma zona" (0–120)
+        float gapDoc;        // huecos a cerrar, en unidades del documento
+        boolean all;         // mirar todas las capas (no solo esta)
+        int color;
+    }
+
+    /** Dibuja lo que se ve de todas las capas, en las coordenadas de la capa actual (modo "todas las capas"). */
+    interface Scene { void draw(Canvas c); }
+
     static final class Result {
         /** Forma nueva de relleno (o null). */
         MDoc.Shape shape;
-        /** Índice donde insertarla dentro del clave. */
+        /** Índice donde insertarla dentro del clave (ya contando las que se quitan). */
         int at;
-        /** Índice de una forma cerrada a la que basta cambiarle el relleno (o -1). */
+        /** Rellenos que la forma nueva reemplaza (se quitan). */
+        ArrayList<Integer> remove = new ArrayList<>();
+        /** Índice de una forma a la que basta cambiarle el color de relleno (o -1). */
         int recolor = -1;
         String error;
     }
 
-    private static final int MAX = 900; // lado máximo de la imagen de trabajo (px)
+    private static final int MAX = 1200; // lado máximo de la imagen de trabajo (px)
 
     /**
-     * Busca qué rellenar en el clave k tocando (x, y) en sus coordenadas. gapDoc = tamaño de hueco a cerrar,
-     * en unidades del documento; inside = forma cerrada de más arriba que contiene el punto (o -1).
+     * Como el balde de DUAL-Draw, pero el resultado es vectorial: se mira el COLOR de lo que se ve alrededor del
+     * toque (con tolerancia), se cierran los huecos, y la zona encontrada pasa a ser una forma de relleno que
+     * REEMPLAZA a los rellenos que cubre (así, volver a pintar una zona la cambia entera, sin dejar borde).
      */
-    static Result find(MDoc.Key k, float x, float y, float gapDoc, int inside, int color) {
+    static Result find(MDoc.Key k, float x, float y, Opts o, RectF stage, Scene scene) {
         Result r = new Result();
-        // zona de trabajo: lo que ocupan las formas, con un margen
         RectF area = new RectF();
         boolean any = false;
         for (MDoc.Shape sh : k.shapes) {
-            if (!barrier(sh)) continue;
+            if (sh.isInst() || sh.count() == 0) continue;
             RectF b = Render.bounds(sh);
             if (!any) { area.set(b); any = true; } else area.union(b);
         }
-        if (!any || !area.contains(x, y)) return leak(r, inside);
-        float pad = Math.max(4, gapDoc * 2);
+        if (o.all && stage != null) { if (!any) area.set(stage); else area.union(stage); any = true; }
+        if (!any || !area.contains(x, y)) return leak(r);
+        // tocar sobre una línea no la rellena (como en Flash)
+        for (int i = k.shapes.size() - 1; i >= 0; i--) {
+            MDoc.Shape sh = k.shapes.get(i);
+            if (sh.isInst() || sh.count() == 0) continue;
+            if (sh.stroke != 0 && sh.width > 0 && Render.hit(sh, x, y, 0, Render.HIT_STROKE)) {
+                r.error = "Toca dentro del área, no sobre la línea";
+                return r;
+            }
+            if (sh.closed && sh.fill != 0 && Render.hit(sh, x, y, 0, Render.HIT_INSIDE)) break; // lo de abajo queda tapado
+        }
+        float pad = Math.max(4, o.gapDoc * 2 + 2);
         area.inset(-pad, -pad);
         float sc = Math.min(4f, MAX / Math.max(area.width(), area.height()));
         int W = Math.max(8, (int) Math.ceil(area.width() * sc)), H = Math.max(8, (int) Math.ceil(area.height() * sc));
-        float gapPx = gapDoc * sc;
+        int N = W * H;
 
-        // 1) trazos como barreras (más gruesos según el hueco a cerrar)
-        Bitmap bm = Bitmap.createBitmap(W, H, Bitmap.Config.ALPHA_8);
+        // 1) lo que se ve, en colores (sobre blanco)
+        Bitmap bm = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(bm);
+        c.drawColor(0xFFFFFFFF);
         c.scale(sc, sc);
         c.translate(-area.left, -area.top);
-        Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
-        stroke.setStyle(Paint.Style.STROKE);
-        stroke.setStrokeCap(Paint.Cap.ROUND);
-        stroke.setStrokeJoin(Paint.Join.ROUND);
-        stroke.setColor(0xFF000000);
-        Paint fillP = new Paint(Paint.ANTI_ALIAS_FLAG);
-        fillP.setColor(0xFF000000);
-        for (MDoc.Shape sh : k.shapes) {
-            if (!barrier(sh)) continue;
-            if (sh.isInst()) { Render.shape(c, sh, 0xFF000000, 0, 1); continue; }
-            stroke.setStrokeWidth(Math.max(sh.width, 1.2f / sc) + 2 * gapDoc);
-            c.drawPath(Render.path(sh), stroke);
-        }
-        int[] px = new int[W * H];
-        byte[] a = new byte[W * H];
-        java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(a);
-        bm.copyPixelsToBuffer(buf);
+        if (o.all && scene != null) scene.draw(c);
+        else for (MDoc.Shape sh : k.shapes) if (!sh.isInst()) Render.shape(c, sh, 0, 0, 1);
+        int[] px = new int[N];
+        bm.getPixels(px, 0, W, 0, 0, W, H);
         bm.recycle();
 
-        // 2) inundar desde el toque (0 = libre, 1 = barrera, 2 = área)
         int sx = (int) ((x - area.left) * sc), sy = (int) ((y - area.top) * sc);
-        if (sx < 0 || sy < 0 || sx >= W || sy >= H) return leak(r, inside);
-        for (int i = 0; i < a.length; i++) px[i] = (a[i] & 0xFF) > 40 ? 1 : 0;
-        if (px[sy * W + sx] != 0) {
-            // tocó justo sobre un trazo: se busca un punto libre muy cerca
-            int best = -1;
-            for (int d = 1; d <= 6 && best < 0; d++)
-                for (int dy = -d; dy <= d && best < 0; dy++)
-                    for (int dx = -d; dx <= d; dx++) {
-                        int qx = sx + dx, qy = sy + dy;
-                        if (qx >= 0 && qy >= 0 && qx < W && qy < H && px[qy * W + qx] == 0) { best = qy * W + qx; break; }
-                    }
-            if (best < 0) { r.error = "Toca dentro del área, no sobre la línea"; return r; }
-            sx = best % W; sy = best / W;
+        if (sx < 0 || sy < 0 || sx >= W || sy >= H) return leak(r);
+        int seed = sy * W + sx, target = px[seed];
+        boolean[] ok = new boolean[N];
+        for (int i = 0; i < N; i++) ok[i] = near(px[i], target, o.tol);
+
+        // 2) huecos: las líneas se engrosan para taparlos; después el relleno vuelve a llegar hasta la línea
+        int gap = Math.round(o.gapDoc * sc);
+        boolean[] allowed = ok;
+        if (gap > 0) {
+            boolean[] wall = new boolean[N];
+            for (int i = 0; i < N; i++) wall[i] = !ok[i];
+            wall = grow(wall, W, H, gap);
+            boolean[] a2 = new boolean[N];
+            for (int i = 0; i < N; i++) a2[i] = ok[i] && !wall[i];
+            if (a2[seed]) allowed = a2; // si se tocó justo junto a la línea, sin cerrar huecos
         }
-        int count = flood(px, W, H, sx, sy);
-        if (count < 0) return leak(r, inside);
-
-        // 3) ¿es justo el interior de la forma cerrada tocada? entonces solo se le cambia el relleno
-        if (inside >= 0) {
-            MDoc.Shape S = k.shapes.get(inside);
-            int interior = interiorPixels(S, area, sc, W, H);
-            if (interior > 0 && count >= interior * 0.75f) { r.recolor = inside; return r; }
+        boolean[] mark = new boolean[N];
+        if (!floodMark(allowed, mark, W, H, seed)) return leak(r);
+        if (allowed != ok) {
+            boolean[] g = grow(mark, W, H, gap + 1);
+            for (int i = 0; i < N; i++) mark[i] = mark[i] || (g[i] && ok[i]);
         }
+        int count = 0;
+        for (boolean b : mark) if (b) count++;
 
-        // 4) el área se agranda un poco para quedar bajo los trazos (el relleno va detrás de ellos)
-        int grow = Math.max(1, Math.round(gapPx) + 1);
-        if (inside >= 0) grow = 1;
-        dilate(px, W, H, grow);
+        // 3) rellenos que esta zona cubre: se reemplazan (o, si es justo uno, solo se le cambia el color)
+        int recolorCand = -1, candArea = 0, covered = 0;
+        boolean[] sm = new boolean[N];
+        for (int i = 0; i < k.shapes.size(); i++) {
+            MDoc.Shape sh = k.shapes.get(i);
+            if (sh.isInst() || !sh.closed || sh.fill == 0 || !near(sh.fill | 0xFF000000, target | 0xFF000000, o.tol)) continue;
+            if (!RectF.intersects(Render.bounds(sh), area)) continue;
+            int vis = 0, in = 0, tot = shapeMask(sh, area, sc, W, H, sm);
+            for (int j = 0; j < N; j++) if (sm[j]) { if (ok[j]) { vis++; if (mark[j]) in++; } }
+            if (vis == 0 || in < vis * 0.9f) continue;
+            covered++;
+            if (sh.stroke == 0) r.remove.add(i);
+            if (recolorCand < 0 || i > recolorCand) { recolorCand = i; candArea = tot; }
+        }
+        if (covered == 1 && count <= candArea * 1.12f) { r.recolor = recolorCand; r.remove.clear(); return r; }
 
-        // 5) contornos del área → forma vectorial
-        ArrayList<float[]> loops = trace(px, W, H);
-        if (loops.isEmpty()) return leak(r, inside);
+        // 4) el relleno pasa 1 px bajo la línea, para que no quede una rendija blanca
+        boolean[] g1 = grow(mark, W, H, 1);
+        int[] m = new int[N];
+        for (int i = 0; i < N; i++) m[i] = g1[i] ? 2 : 0;
+
+        // 5) contornos → forma vectorial
+        ArrayList<float[]> loops = trace(m, W, H);
         ArrayList<Float> nodes = new ArrayList<>();
         ArrayList<Integer> starts = new ArrayList<>();
         for (float[] loop : loops) {
-            float[] simp = simplify(loop, 0.8f);
+            float[] simp = simplify(loop, 0.6f);
             if (simp.length < 6) continue;
             if (!nodes.isEmpty()) starts.add(nodes.size() / 6);
             for (int i = 0; i < simp.length; i += 2) {
@@ -119,35 +145,44 @@ final class Fill {
                 for (int j = 0; j < 3; j++) { nodes.add(dx); nodes.add(dy); }
             }
         }
-        if (nodes.size() < 18) return leak(r, inside);
+        if (nodes.size() < 18) return leak(r);
         MDoc.Shape sh = new MDoc.Shape();
         sh.n = new float[nodes.size()];
         for (int i = 0; i < sh.n.length; i++) sh.n[i] = nodes.get(i);
         if (!starts.isEmpty()) { sh.sub = new int[starts.size()]; for (int i = 0; i < sh.sub.length; i++) sh.sub[i] = starts.get(i); }
         sh.closed = true;
-        sh.fill = color;
+        sh.fill = o.color;
         sh.stroke = 0;
         sh.width = 0;
         r.shape = sh;
-        // detrás de todo, o justo encima de la forma cerrada que lo contiene (para no quedar tapado por su relleno)
-        r.at = inside >= 0 ? inside + 1 : 0;
+        // va donde estaba el relleno de más abajo que reemplaza; si no, encima del relleno que lo contiene, o al fondo
+        int at = 0;
+        if (!r.remove.isEmpty()) {
+            at = Integer.MAX_VALUE;
+            for (int i : r.remove) at = Math.min(at, i);
+        } else for (int i = 0; i < k.shapes.size(); i++) {
+            MDoc.Shape t = k.shapes.get(i);
+            if (!t.isInst() && t.closed && t.fill != 0 && Render.hit(t, x, y, 0, Render.HIT_INSIDE)) at = i + 1;
+        }
+        int shift = 0;
+        for (int i : r.remove) if (i < at) shift++;
+        r.at = at - shift;
         return r;
     }
 
-    private static Result leak(Result r, int inside) {
-        if (inside >= 0) r.recolor = inside;
-        else r.error = "Esa área no está cerrada. Junta las líneas, o elige \"cerrar huecos\" más grandes (mantén presionado el cubo)";
+    private static Result leak(Result r) {
+        r.error = "Esa área no está cerrada: junta las líneas o sube \"Huecos\" en las opciones del cubo";
         return r;
     }
 
-    /** Lo que encierra áreas: todo menos los rellenos sueltos (formas sin trazo, como los que deja el cubo). */
-    private static boolean barrier(MDoc.Shape sh) {
-        if (sh.isInst()) return false; // como en Flash: un símbolo no es parte del dibujo de la escena
-        if (sh.count() == 0) return false;
-        return sh.stroke != 0 && sh.width > 0;
+    /** ¿Dos colores se parecen (cada canal, también la transparencia, dentro de la tolerancia)? */
+    static boolean near(int a, int b, int tol) {
+        return Math.abs((a >>> 24) - (b >>> 24)) <= tol && Math.abs(((a >> 16) & 0xFF) - ((b >> 16) & 0xFF)) <= tol
+                && Math.abs(((a >> 8) & 0xFF) - ((b >> 8) & 0xFF)) <= tol && Math.abs((a & 0xFF) - (b & 0xFF)) <= tol;
     }
 
-    private static int interiorPixels(MDoc.Shape S, RectF area, float sc, int W, int H) {
+    /** Píxeles que ocupa el relleno de una forma (en sm); devuelve cuántos. */
+    private static int shapeMask(MDoc.Shape S, RectF area, float sc, int W, int H, boolean[] sm) {
         Bitmap bm = Bitmap.createBitmap(W, H, Bitmap.Config.ALPHA_8);
         Canvas c = new Canvas(bm);
         c.scale(sc, sc);
@@ -159,8 +194,47 @@ final class Fill {
         bm.copyPixelsToBuffer(java.nio.ByteBuffer.wrap(a));
         bm.recycle();
         int n = 0;
-        for (byte b : a) if ((b & 0xFF) > 127) n++;
+        for (int i = 0; i < a.length; i++) { sm[i] = (a[i] & 0xFF) > 127; if (sm[i]) n++; }
         return n;
+    }
+
+    /** Inunda desde seed por los permitidos (4 vecinos). false si la zona llega al borde (no está cerrada). */
+    static boolean floodMark(boolean[] allowed, boolean[] mark, int W, int H, int seed) {
+        int N = W * H;
+        if (!allowed[seed]) return false;
+        int[] stack = new int[Math.max(64, W * 4)];
+        int sp = 0;
+        stack[sp++] = seed;
+        mark[seed] = true;
+        while (sp > 0) {
+            int i = stack[--sp], cx = i % W, cy = i / W;
+            if (cx == 0 || cy == 0 || cx == W - 1 || cy == H - 1) return false;
+            if (sp + 4 > stack.length) stack = java.util.Arrays.copyOf(stack, stack.length * 2);
+            if (!mark[i - 1] && allowed[i - 1]) { mark[i - 1] = true; stack[sp++] = i - 1; }
+            if (!mark[i + 1] && allowed[i + 1]) { mark[i + 1] = true; stack[sp++] = i + 1; }
+            if (!mark[i - W] && allowed[i - W]) { mark[i - W] = true; stack[sp++] = i - W; }
+            if (!mark[i + W] && allowed[i + W]) { mark[i + W] = true; stack[sp++] = i + W; }
+        }
+        return true;
+    }
+
+    /** Engrosa la zona marcada r píxeles (cuadrado, en dos pasadas), como en DUAL-Draw. */
+    static boolean[] grow(boolean[] in, int W, int H, int r) {
+        int N = W * H;
+        boolean[] h = new boolean[N], v = new boolean[N];
+        for (int y = 0; y < H; y++) {
+            int base = y * W, last = -100000;
+            for (int x = 0; x < W; x++) { if (in[base + x]) last = x; if (x - last <= r) h[base + x] = true; }
+            last = 100000;
+            for (int x = W - 1; x >= 0; x--) { if (in[base + x]) last = x; if (last - x <= r) h[base + x] = true; }
+        }
+        for (int x = 0; x < W; x++) {
+            int last = -100000;
+            for (int y = 0; y < H; y++) { if (h[y * W + x]) last = y; if (y - last <= r) v[y * W + x] = true; }
+            last = 100000;
+            for (int y = H - 1; y >= 0; y--) { if (h[y * W + x]) last = y; if (last - y <= r) v[y * W + x] = true; }
+        }
+        return v;
     }
 
     /** Inunda (relleno por líneas). Devuelve los píxeles marcados, o -1 si el área se escapa por el borde. */

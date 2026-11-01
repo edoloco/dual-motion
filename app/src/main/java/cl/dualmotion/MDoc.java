@@ -856,6 +856,19 @@ public final class MDoc {
                 if (at >= 0 && at <= ek.shapes.size()) ek.shapes.add(at, s); else ek.shapes.add(s);
                 return true;
             }
+            case "fillArea": { // cubo: quita los rellenos que la zona reemplaza y pone el relleno nuevo, en un paso
+                Key k = shown(L, f);
+                Shape ns = Shape.from(m.getJSONObject("s"));
+                if (k == null || ns.count() == 0) return false;
+                ArrayList<Integer> rm = indices(m.optJSONArray("rm") == null ? new JSONArray() : m.optJSONArray("rm"), k.shapes.size());
+                push(pl);
+                k = editAt(L, f);
+                Collections.sort(rm, Collections.reverseOrder());
+                for (int idx : rm) k.shapes.remove(idx);
+                int at = clamp(m.optInt("at", 0), 0, k.shapes.size());
+                k.shapes.add(at, ns);
+                return true;
+            }
             case "set": {
                 Key k = shown(L, f);
                 JSONArray is = m.optJSONArray("is"), ss = m.optJSONArray("ss");

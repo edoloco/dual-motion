@@ -20,8 +20,10 @@ public final class State {
     public float width = 3;
     public int layer, frame;
     public boolean onion;
-    /** Cubo de pintura: cerrar huecos (0 no, 1 pequeños, 2 medianos, 3 grandes), como en Flash. */
-    public int gap = 1;
+    /** Cubo de pintura (como el balde de DUAL-Draw): tolerancia de color, huecos a cerrar (px de la mesa) y si
+     *  mira todas las capas o solo la actual. */
+    public int tol = 40, gap = 2;
+    public boolean fillAll;
     /**
      * Edición de un símbolo en el lugar: sym = id del símbolo ("" = la escena). layer y frame son entonces los
      * del símbolo; pl, pf, pi dicen dónde está la instancia por la que se entró (capa, fotograma y forma en la
@@ -36,7 +38,7 @@ public final class State {
         JSONObject o = new JSONObject();
         try {
             o.put("tool", tool); o.put("sc", stroke); o.put("fc", fill); o.put("sw", (double) width);
-            o.put("l", layer); o.put("f", frame); o.put("on", onion); o.put("gap", gap);
+            o.put("l", layer); o.put("f", frame); o.put("on", onion); o.put("gap", gap); o.put("tol", tol); o.put("fa", fillAll);
             o.put("sym", sym); o.put("pl", pl); o.put("pf", pf); o.put("pi", pi);
         } catch (JSONException ignored) { }
         return o;
@@ -51,6 +53,8 @@ public final class State {
         frame = o.optInt("f", frame);
         onion = o.optBoolean("on", onion);
         gap = o.optInt("gap", gap);
+        tol = o.optInt("tol", tol);
+        fillAll = o.optBoolean("fa", fillAll);
         sym = o.optString("sym", "");
         pl = o.optInt("pl"); pf = o.optInt("pf"); pi = o.optInt("pi");
     }

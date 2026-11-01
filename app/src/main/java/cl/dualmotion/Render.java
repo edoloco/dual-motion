@@ -293,7 +293,7 @@ public final class Render {
             if (r.contains(Math.round(x), Math.round(y))) return true;
         }
         if ((mode & HIT_STROKE) != 0) {
-            hitP.setStrokeWidth(Math.max(s.stroke != 0 ? s.width : 0, 1) + tol * 2);
+            hitP.setStrokeWidth(Math.max(0.5f, Math.max(s.stroke != 0 ? s.width : 0, 1) + tol * 2));
             Path out = new Path();
             hitP.getFillPath(p, out);
             Region r = new Region();

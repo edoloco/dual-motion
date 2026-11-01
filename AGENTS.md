@@ -101,10 +101,13 @@ ahí un clave con la pose interpolada.
 Selección (mover, marco), Subselección (nodos y manillas), Transformación libre (todo el clave: dentro = mover,
 manillas = escalar, por fuera de las esquinas = girar; escala y giro alrededor del centro), Pluma (tocar = recto, arrastrar = curva, primer punto
 = cerrar, último punto o "✓ Terminar" = terminar), Línea, Rectángulo, Óvalo, Lápiz, Pincel (usa el color de
-relleno), Cubo de pintura (como en Flash: rellena el área encerrada por los trazos alrededor del toque, aunque sea a mano o
-con varias líneas; `Fill`: trazos a imagen → inundar → contornos → forma de relleno sin trazo, con huecos por
-`Shape.sub` y relleno par-impar, que va detrás (orden `add` con `at`). Si el área es justo el interior de una
-forma cerrada, solo le cambia el relleno. Mantener presionado el cubo: cerrar huecos 0–3, `State.gap`),
+relleno), Cubo de pintura (como el balde de DUAL-Draw, pero vectorial; `Fill`): pinta lo que se ve en colores, toma la
+zona del color tocado con **tolerancia** (`State.tol`, 0–120), cierra **huecos** (`State.gap`, px de la mesa:
+engrosa las líneas, inunda y vuelve a crecer hasta la línea) y puede mirar solo esta capa o todas (`State.fillAll`).
+La zona pasa a ser una forma de relleno sin trazo (con huecos por `Shape.sub`, par-impar) que **reemplaza** a los
+rellenos que cubre (orden `fillArea {l,f,s,at,rm}`, un solo paso de deshacer): repintar una zona la cambia entera,
+sin dejar borde. Si cubre justo un relleno, solo le cambia el color. Tocar sobre una línea no hace nada. Las
+opciones aparecen en el panel derecho del principal al elegir el cubo.
 Bote de tinta, Cuentagotas, Borrador (borra formas enteras), Mano.
 
 ## Símbolos gráficos

@@ -347,7 +347,7 @@ public final class MotionActivity extends Activity
             final int tool = i;
             Ui.ToolButton tb = new Ui.ToolButton(this, i);
             tb.setOnClickListener(v -> setTool(tool));
-            if (i == State.BUCKET) tb.setOnLongClickListener(v -> { gapMenu(); return true; });
+            if (i == State.BUCKET) tb.setOnLongClickListener(v -> { setTool(State.BUCKET); Ui.toast(this, "Opciones del cubo en el panel de la derecha"); return true; });
             toolBtns[i] = tb;
             line.addView(tb, new LinearLayout.LayoutParams(0, -1, 1));
         }
@@ -355,16 +355,43 @@ public final class MotionActivity extends Activity
     }
 
     /** Cubo de pintura: cerrar huecos (como en Flash). */
-    private void gapMenu() {
-        String[] items = {"No cerrar huecos", "Cerrar huecos pequeños", "Cerrar huecos medianos", "Cerrar huecos grandes"};
-        for (int i = 0; i < items.length; i++) if (i == st.gap) items[i] += "   ✓";
-        new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
-                .setTitle("Cubo de pintura")
-                .setItems(items, (d, w) -> {
-                    st.gap = w;
-                    prefs.edit().putInt("gap", w).apply();
-                    setTool(State.BUCKET);
-                }).show();
+    // ---- opciones del cubo (como el balde de DUAL-Draw): tolerancia, huecos y qué capas mira
+    private LinearLayout bucketBox;
+    private TextView tolL, gapL, allL;
+
+    private View buildBucketBox() {
+        bucketBox = new LinearLayout(this);
+        bucketBox.setOrientation(LinearLayout.VERTICAL);
+        bucketBox.setPadding(0, dp(8), 0, 0);
+        LinearLayout r1 = new LinearLayout(this);
+        r1.setGravity(Gravity.CENTER_VERTICAL);
+        tolL = Ui.label(this, "", 12, 0xFF555555);
+        r1.addView(tolL, new LinearLayout.LayoutParams(0, -2, 1));
+        addBtn(r1, "−", "Menos tolerancia: solo el mismo color exacto", () -> setFillOpts(st.tol - 8, st.gap, st.fillAll));
+        addBtn(r1, "+", "Más tolerancia: acepta colores parecidos", () -> setFillOpts(st.tol + 8, st.gap, st.fillAll));
+        bucketBox.addView(r1);
+        LinearLayout r2 = new LinearLayout(this);
+        r2.setGravity(Gravity.CENTER_VERTICAL);
+        r2.setPadding(0, dp(4), 0, 0);
+        gapL = Ui.label(this, "", 12, 0xFF555555);
+        r2.addView(gapL, new LinearLayout.LayoutParams(0, -2, 1));
+        addBtn(r2, "−", "Cerrar huecos más chicos", () -> setFillOpts(st.tol, st.gap - 1, st.fillAll));
+        addBtn(r2, "+", "Cerrar huecos más grandes entre las líneas", () -> setFillOpts(st.tol, st.gap + 1, st.fillAll));
+        bucketBox.addView(r2);
+        allL = Ui.sym(this, "", "Si el cubo mira solo esta capa o todo lo que se ve", () -> setFillOpts(st.tol, st.gap, !st.fillAll));
+        allL.setTextSize(12);
+        LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(-1, dp(36));
+        alp.topMargin = dp(4);
+        bucketBox.addView(allL, alp);
+        return bucketBox;
+    }
+
+    private void setFillOpts(int tol, int gap, boolean all) {
+        st.tol = Math.max(0, Math.min(120, tol));
+        st.gap = Math.max(0, Math.min(8, gap));
+        st.fillAll = all;
+        prefs.edit().putInt("fillTol", st.tol).putInt("fillGap", st.gap).putBoolean("fillAll", all).apply();
+        stateChanged(null);
     }
 
     private View buildControls() {
@@ -498,6 +525,7 @@ public final class MotionActivity extends Activity
         col.addView(colors);
 
         col.addView(new Palette(this), lpMargins(-1, dp(56), 0, dp(8), 0, 0));
+        col.addView(buildBucketBox());
 
         widthLabel = Ui.label(this, "", 12, 0xFF555555);
         widthLabel.setPadding(0, dp(8), 0, 0);
@@ -1511,6 +1539,12 @@ public final class MotionActivity extends Activity
 
     private void refreshProps() {
         refreshKeyButtons();
+        if (bucketBox != null) {
+            bucketBox.setVisibility(st.tool == State.BUCKET ? View.VISIBLE : View.GONE);
+            tolL.setText("Tolerancia " + st.tol);
+            gapL.setText("Huecos " + st.gap + " px");
+            allL.setText(st.fillAll ? "Mira: todas las capas" : "Mira: solo esta capa");
+        }
         if (docLabel != null) {
             MDoc.Symbol Y = st.inSymbol() ? doc.symbol(st.sym) : null;
             docLabel.setText(Y != null ? "🎬 " + doc.scene + "  ›  ◈ " + Y.name + "   ↩"
@@ -1606,7 +1640,9 @@ public final class MotionActivity extends Activity
         st.fill = prefs.getInt("fc", st.fill);
         st.width = prefs.getFloat("sw", st.width);
         st.onion = prefs.getBoolean("onion", false);
-        st.gap = prefs.getInt("gap", 1);
+        st.tol = prefs.getInt("fillTol", 40);
+        st.gap = prefs.getInt("fillGap", 2);
+        st.fillAll = prefs.getBoolean("fillAll", false);
     }
 
     // ================================================================ piezas pequeñas
