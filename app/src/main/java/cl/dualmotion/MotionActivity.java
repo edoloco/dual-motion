@@ -63,6 +63,19 @@ public final class MotionActivity extends Activity
     private boolean keepStage;
     private boolean connected;
     private int selN;
+    /** Símbolo elegido en la mesa (si es lo único seleccionado): nombre y cómo se repite. */
+    private String selSym;
+    private int selLoop;
+
+    /** Capas de la línea de tiempo en que se trabaja (la escena o el símbolo que se edita). */
+    private java.util.List<MDoc.Layer> T() { return doc.timeline(st.sym); }
+
+    private MDoc.Layer lay(int l) {
+        java.util.List<MDoc.Layer> t = T();
+        return l >= 0 && l < t.size() ? t.get(l) : null;
+    }
+
+    @Override public java.util.List<MDoc.Layer> layers() { return T(); }
 
     private FrameLayout root;
     private StageView stage;
@@ -268,6 +281,7 @@ public final class MotionActivity extends Activity
         docLabel = Ui.label(this, "", 14, 0xFFFFFFFF);
         docLabel.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         docLabel.setSingleLine(true);
+        docLabel.setOnClickListener(v -> { if (st.inSymbol()) exitSymbol(); });
         head.addView(docLabel, new LinearLayout.LayoutParams(0, -2, 1));
         connLabel = Ui.label(this, isSolo() ? "Un solo teléfono" : "Buscando el extendido…", 13, 0xFFFFFFFF);
         connLabel.setOnClickListener(v -> {
@@ -275,6 +289,10 @@ public final class MotionActivity extends Activity
             else connectionDialog();
         });
         head.addView(connLabel);
+        TextView quitB = Ui.label(this, "  ⏻", 18, 0xFFFFFFFF);
+        quitB.setOnClickListener(v -> askQuit());
+        quitB.setOnLongClickListener(v -> { Ui.toast(this, "Cerrar DUAL Motion"); return true; });
+        head.addView(quitB);
         center.addView(head);
 
         // línea de tiempo
@@ -497,6 +515,32 @@ public final class MotionActivity extends Activity
         addBtn(edit2, "☰", "Menú", this::menu);
         col.addView(edit2);
 
+        // ---- símbolo gráfico
+        TextView symT = Ui.label(this, "Símbolo gráfico", 12, 0xFF555555);
+        symT.setPadding(0, dp(12), 0, dp(4));
+        col.addView(symT);
+        toSymBtn = Ui.sym(this, "◈  Convertir en símbolo", "Convierte lo seleccionado en un símbolo gráfico", () -> cmd("toSym"));
+        toSymBtn.setTextSize(13);
+        col.addView(toSymBtn, new LinearLayout.LayoutParams(-1, dp(40)));
+        symBox = new LinearLayout(this);
+        symBox.setOrientation(LinearLayout.VERTICAL);
+        symName = Ui.label(this, "", 13, 0xFF5E35B1);
+        symName.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        symName.setPadding(0, dp(6), 0, dp(4));
+        symBox.addView(symName);
+        LinearLayout modes = new LinearLayout(this);
+        loopBtns = new TextView[]{
+                modeBtn(modes, "Repetir", "La animación del símbolo se repite en ciclo", 0),
+                modeBtn(modes, "Una vez", "Se reproduce una vez y queda en el último fotograma", 1),
+                modeBtn(modes, "1 foto", "Muestra un solo fotograma", 2)};
+        symBox.addView(modes);
+        TextView editSym = Ui.sym(this, "✎  Editar el símbolo (o toca dos veces)", "Animar por dentro el símbolo elegido", () -> cmd("editSym"));
+        editSym.setTextSize(12);
+        LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(-1, dp(36));
+        elp.topMargin = dp(4);
+        symBox.addView(editSym, elp);
+        col.addView(symBox);
+
         // ---- interpolación del clave actual
         TextView secT = Ui.label(this, "Interpolación", 12, 0xFF555555);
         secT.setPadding(0, dp(12), 0, dp(4));
@@ -543,6 +587,19 @@ public final class MotionActivity extends Activity
         return sv;
     }
 
+    private TextView toSymBtn, symName;
+    private TextView[] loopBtns;
+    private LinearLayout symBox;
+
+    private TextView modeBtn(LinearLayout row, String name, String hint, final int mode) {
+        TextView t = Ui.sym(this, name, hint, () -> cmd("loop" + mode));
+        t.setTextSize(11);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(32), 1);
+        lp.setMargins(dp(1), 0, dp(1), 0);
+        row.addView(t, lp);
+        return t;
+    }
+
     private void preset(LinearLayout row, String name, String hint, final float[] c) {
         TextView t = Ui.sym(this, name, hint, () -> setEase(c));
         t.setTextSize(11);
@@ -553,7 +610,7 @@ public final class MotionActivity extends Activity
 
     /** Clave vigente en el fotograma actual de la capa actual (null si la capa ya terminó). */
     private java.util.Map.Entry<Integer, MDoc.Key> curKeyEntry() {
-        MDoc.Layer L = doc.layer(st.layer);
+        MDoc.Layer L = lay(st.layer);
         if (L == null || st.frame >= L.len) return null;
         return L.keys.floorEntry(st.frame);
     }
@@ -621,7 +678,8 @@ public final class MotionActivity extends Activity
     private void openPreview() {
         previewLayer.setVisibility(View.VISIBLE);
         previewBar.setVisibility(View.VISIBLE);
-        int from = st.frame >= doc.length() - 1 ? 0 : st.frame;
+        int at = st.inSymbol() ? st.pf : st.frame;
+        int from = at >= doc.length() - 1 ? 0 : at;
         startPlay(from);
         sendPlay(true, from);
         refreshPreviewBar();
@@ -635,7 +693,8 @@ public final class MotionActivity extends Activity
     }
 
     private void resumePreview() {
-        int from = st.frame >= doc.length() - 1 ? 0 : st.frame;
+        int at = st.inSymbol() ? st.pf : st.frame;
+        int from = at >= doc.length() - 1 ? 0 : at;
         startPlay(from);
         sendPlay(true, from);
         refreshPreviewBar();
@@ -709,7 +768,7 @@ public final class MotionActivity extends Activity
         playing = false;
         audio.stop();
         Choreographer.getInstance().removeFrameCallback(tick);
-        if (keep) st.frame = pFrame;
+        if (keep) { if (st.inSymbol()) st.pf = pFrame; else st.frame = pFrame; }
         refreshAll();
     }
 
@@ -742,7 +801,12 @@ public final class MotionActivity extends Activity
     }
 
     /** Pide una orden: en solo se aplica aquí; en el principal se le pide al extendido (dueño del documento). */
+    private static final java.util.Set<String> DOC_OPS = new java.util.HashSet<>(java.util.Arrays.asList(
+            "undo", "redo", "new", "load", "fps", "sndAdd", "symName"));
+
     private void request(JSONObject o) {
+        if (st.inSymbol() && !o.has("sym") && !DOC_OPS.contains(o.optString("op")))
+            try { o.put("sym", st.sym); } catch (JSONException ignored) { }
         if (isView()) {
             if (!connected) { Ui.toast(this, "Sin conexión con el extendido"); return; }
             JSONObject m = new JSONObject();
@@ -775,7 +839,8 @@ public final class MotionActivity extends Activity
     }
 
     private void clampState() {
-        st.layer = Math.max(0, Math.min(st.layer, doc.layers.size() - 1));
+        if (st.inSymbol() && doc.symbol(st.sym) == null) { st.sym = ""; st.layer = st.pl; st.frame = st.pf; } // el símbolo ya no existe
+        st.layer = Math.max(0, Math.min(st.layer, T().size() - 1));
         st.frame = Math.max(0, st.frame);
     }
 
@@ -815,6 +880,11 @@ public final class MotionActivity extends Activity
                 case "front": stage.orderSelection(true); break;
                 case "back": stage.orderSelection(false); break;
                 case "fit": stage.fit(); break;
+                case "toSym": stage.convertToSymbol(); break;
+                case "editSym": stage.editSelectedSymbol(); break;
+                case "loop0": stage.setInstLoop(0, -1); break;
+                case "loop1": stage.setInstLoop(1, -1); break;
+                case "loop2": stage.setInstLoop(2, -1); break;
             }
             return;
         }
@@ -890,7 +960,19 @@ public final class MotionActivity extends Activity
                 break;
             case "moSel":
                 selN = m.optInt("n");
+                selSym = m.optString("sym", "");
+                if (selSym.isEmpty()) selSym = null;
+                selLoop = m.optInt("lp");
                 refreshProps();
+                break;
+            case "moEnter":
+                if (isView()) enterSymbol(m.optInt("l"), m.optInt("f"), m.optInt("i"));
+                break;
+            case "moExit":
+                if (isView()) exitSymbol();
+                break;
+            case "moQuit":
+                quit(false);
                 break;
             // ---- llegan al extendido
             case "moReq": {
@@ -900,8 +982,10 @@ public final class MotionActivity extends Activity
             }
             case "moState": {
                 int oldTool = st.tool;
+                String oldSym = st.sym;
                 st.from(m);
                 if (stage != null) {
+                    if (!oldSym.equals(st.sym)) { stage.clearSel(); stage.toolChanged(); }
                     if (oldTool != st.tool) stage.toolChanged();
                     String ap = m.optString("ap", "");
                     if (!ap.isEmpty()) stage.styleSelection(ap);
@@ -955,7 +1039,7 @@ public final class MotionActivity extends Activity
             if (snd == null) { Ui.toast(this, "No se pudo cargar el sonido: " + err); return; }
             if (isView()) Sounds.sendFile(this, snd.id, snd.ext); // el archivo viaja antes que las órdenes
             request(op("sndAdd", "id", snd.id, "name", snd.name, "ext", snd.ext, "dur", snd.dur));
-            MDoc.Layer L = doc.layer(st.layer);
+            MDoc.Layer L = lay(st.layer);
             int l = st.layer;
             if (L == null || !L.audio) request(op("layerAdd", "at", l, "audio", 1)); // capa de sonido nueva arriba de la actual
             MDoc.Clip c = new MDoc.Clip();
@@ -976,7 +1060,7 @@ public final class MotionActivity extends Activity
     private void cutClip() {
         int t = (int) ((long) st.frame * 1000 / doc.fps);
         int l = tl != null && tl.selClipL >= 0 ? tl.selClipL : st.layer;
-        MDoc.Layer L = doc.layer(l);
+        MDoc.Layer L = lay(l);
         if (L == null || !L.audio) { Ui.toast(this, "Elige una capa de sonido (o toca un trozo de sonido)"); return; }
         int i = tl != null && tl.selClipL == l ? tl.selClipI : -1;
         if (i < 0 || i >= L.clips.size() || t <= L.clips.get(i).at || t >= L.clips.get(i).end()) {
@@ -989,7 +1073,7 @@ public final class MotionActivity extends Activity
     }
 
     @Override public void clipMenu(final int layer, final int index) {
-        MDoc.Layer L = doc.layer(layer);
+        MDoc.Layer L = lay(layer);
         if (L == null || index >= L.clips.size()) return;
         final MDoc.Clip c = L.clips.get(index);
         MDoc.Sound snd = doc.sound(c.s);
@@ -1124,14 +1208,48 @@ public final class MotionActivity extends Activity
         refreshProps();
     }
 
-    @Override public void selChanged(int n) {
+    @Override public void selChanged(int n, MDoc.Shape inst) {
         selN = n;
-        if (isEdit()) send("moSel", "n", n);
+        MDoc.Symbol Y = inst == null ? null : doc.symbol(inst.sym);
+        selSym = Y == null ? null : Y.name;
+        selLoop = inst == null ? 0 : inst.loop;
+        if (isEdit()) send("moSel", "n", n, "sym", selSym == null ? "" : selSym, "lp", selLoop);
         else refreshProps();
     }
 
+    // ================================================================ editar un símbolo en el lugar
+    @Override public void enterSymbol(int layer, int frame, int index) {
+        if (isEdit()) { send("moEnter", "l", layer, "f", frame, "i", index); return; } // lo decide el principal
+        MDoc.Layer PL = doc.layer(layer);
+        MDoc.Pose pp = PL == null ? null : MDoc.pose(PL, frame);
+        if (pp == null || index < 0 || index >= pp.key.shapes.size() || !pp.key.shapes.get(index).isInst()) return;
+        MDoc.Shape inst = pp.key.shapes.get(index);
+        MDoc.Symbol Y = doc.symbol(inst.sym);
+        if (Y == null) return;
+        st.pl = layer; st.pf = frame; st.pi = index;
+        st.sym = Y.id;
+        st.layer = 0;
+        // se empieza en el fotograma del símbolo que se estaba viendo
+        st.frame = MDoc.symFrame(inst, frame - pp.keyFrame, MDoc.length(Y.layers));
+        if (tl != null) { tl.clearClipSel(); tl.ensureVisible(st.frame); }
+        if (stage != null) { stage.clearSel(); stage.toolChanged(); }
+        Ui.toast(this, "Editando " + Y.name + ": dibuja sus fotogramas. Toca dos veces fuera o ↩ para volver");
+        stateChanged(null);
+    }
+
+    @Override public void exitSymbol() {
+        if (isEdit()) { send("moExit"); return; }
+        if (!st.inSymbol()) return;
+        st.sym = "";
+        st.layer = st.pl;
+        st.frame = st.pf;
+        if (tl != null) { tl.clearClipSel(); tl.ensureVisible(st.frame); }
+        if (stage != null) { stage.clearSel(); stage.toolChanged(); }
+        stateChanged(null);
+    }
+
     @Override public String status() {
-        MDoc.Layer L = doc.layer(st.layer);
+        MDoc.Layer L = lay(st.layer);
         String s = (L == null ? "—" : L.name) + "  ·  Fotograma " + (shownFrame() + 1);
         if (L != null && L.lock) s += "  ·  🔒";
         if (isEdit()) s += connected ? "  ·  ● Principal" : "  ·  ○ Sin principal";
@@ -1141,14 +1259,14 @@ public final class MotionActivity extends Activity
     // ================================================================ TimelineView.Host
     @Override public void select(int layer, int frame) {
         if (playing) return;
-        st.layer = Math.max(0, Math.min(layer, doc.layers.size() - 1));
+        st.layer = Math.max(0, Math.min(layer, T().size() - 1));
         st.frame = Math.max(0, frame);
         if (tl != null) tl.ensureVisible(st.frame);
         stateChanged(null);
     }
 
     @Override public void toggle(int layer, String which) {
-        MDoc.Layer L = doc.layer(layer);
+        MDoc.Layer L = lay(layer);
         if (L == null) return;
         boolean v = "vis".equals(which) ? !L.vis : "lock".equals(which) ? !L.lock : !L.out;
         request(op("layer", "l", layer, which, v));
@@ -1157,12 +1275,12 @@ public final class MotionActivity extends Activity
     @Override public void addLayer() { request(op("layerAdd", "at", st.layer)); }
 
     @Override public void delLayer() {
-        if (doc.layers.size() <= 1) { Ui.toast(this, "Debe quedar al menos una capa"); return; }
+        if (T().size() <= 1) { Ui.toast(this, "Debe quedar al menos una capa"); return; }
         request(op("layerDel", "l", st.layer));
     }
 
     @Override public void frameMenu(final int layer, final int frame) {
-        MDoc.Layer FL = doc.layer(layer);
+        MDoc.Layer FL = lay(layer);
         java.util.Map.Entry<Integer, MDoc.Key> ke = FL == null || frame >= FL.len ? null : FL.keys.floorEntry(frame);
         final boolean tw = ke != null && ke.getValue().tween;
         String[] items = {"Insertar fotograma clave", "Insertar fotograma clave vacío", "Insertar fotograma",
@@ -1182,8 +1300,33 @@ public final class MotionActivity extends Activity
                 }).show();
     }
 
-    @Override public void rename(final int layer) {
-        MDoc.Layer L = doc.layer(layer);
+    @Override public void layerMenu(final int layer) {
+        final MDoc.Layer L = lay(layer);
+        if (L == null) return;
+        select(layer, st.frame);
+        String[] items = {"Renombrar", "Eliminar capa", "Insertar capa encima", "Subir", "Bajar",
+                L.vis ? "Ocultar" : "Mostrar", L.lock ? "Desbloquear" : "Bloquear"};
+        new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setTitle((L.audio ? "♪ " : "") + L.name)
+                .setItems(items, (d, w) -> {
+                    switch (w) {
+                        case 0: rename(layer); break;
+                        case 1:
+                            if (T().size() <= 1) { Ui.toast(this, "Debe quedar al menos una capa"); break; }
+                            request(op("layerDel", "l", layer));
+                            Ui.toast(this, "Capa eliminada (↶ para deshacer)");
+                            break;
+                        case 2: request(op("layerAdd", "at", layer)); break;
+                        case 3: if (layer > 0) { request(op("layerMove", "l", layer, "to", layer - 1)); select(layer - 1, st.frame); } break;
+                        case 4: if (layer < T().size() - 1) { request(op("layerMove", "l", layer, "to", layer + 1)); select(layer + 1, st.frame); } break;
+                        case 5: toggle(layer, "vis"); break;
+                        case 6: toggle(layer, "lock"); break;
+                    }
+                }).show();
+    }
+
+    private void rename(final int layer) {
+        MDoc.Layer L = lay(layer);
         if (L == null) return;
         final EditText e = new EditText(this);
         e.setText(L.name);
@@ -1204,7 +1347,7 @@ public final class MotionActivity extends Activity
     @Override public void menu() {
         String[] items = {"Guardar", "Guardar como…", "Abrir…", "Nuevo documento", "Conexión",
                 "Cambiar el papel de este teléfono", "Buscar actualización", "Acerca de DUAL Motion",
-                "Exportar video (MP4)", "Agregar sonido…"};
+                "Exportar video (MP4)", "Agregar sonido…", "Cerrar DUAL Motion"};
         new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
                 .setItems(items, (d, w) -> {
                     switch (w) {
@@ -1231,8 +1374,29 @@ public final class MotionActivity extends Activity
                         case 7: about(); break;
                         case 8: exportVideo(); break;
                         case 9: addSound(); break;
+                        case 10: askQuit(); break;
                     }
                 }).show();
+    }
+
+    // ================================================================ cerrar
+    private void askQuit() {
+        new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setTitle("Cerrar DUAL Motion")
+                .setMessage(isSolo() ? "Tu trabajo queda guardado." : "Se cierra en los dos teléfonos. Tu trabajo queda guardado en el extendido.")
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Cerrar", (d, w) -> quit(true))
+                .show();
+    }
+
+    /** Guarda, avisa al otro teléfono (tell) y cierra la pantalla y la conexión. */
+    void quit(boolean tell) {
+        stopPlay(false);
+        if (role != null && !isView()) { ui.removeCallbacks(saveR); writeAutosave(doc.toJson().toString()); }
+        if (tell && !isSolo()) send("moQuit");
+        LinkService.detach(this);
+        if (!isSolo()) ui.postDelayed(() -> LinkService.stop(getApplicationContext()), tell ? 600 : 0);
+        finishAndRemoveTask();
     }
 
     private void about() {
@@ -1300,10 +1464,22 @@ public final class MotionActivity extends Activity
 
     private void refreshProps() {
         refreshKeyButtons();
-        if (docLabel != null) docLabel.setText("🎬 " + doc.scene + "  ·  " + prefs.getString("docName", "Sin guardar"));
+        if (docLabel != null) {
+            MDoc.Symbol Y = st.inSymbol() ? doc.symbol(st.sym) : null;
+            docLabel.setText(Y != null ? "🎬 " + doc.scene + "  ›  ◈ " + Y.name + "   ↩"
+                    : "🎬 " + doc.scene + "  ·  " + prefs.getString("docName", "Sin guardar"));
+        }
+        if (symBox != null) {
+            symBox.setVisibility(selSym != null ? View.VISIBLE : View.GONE);
+            toSymBtn.setVisibility(selSym == null ? View.VISIBLE : View.GONE);
+            if (selSym != null) {
+                symName.setText("◈ " + selSym);
+                for (int i = 0; i < loopBtns.length; i++) loopBtns[i].setTextColor(i == selLoop ? 0xFF5E35B1 : 0xFF9E9E9E);
+            }
+        }
         if (tweenBtn != null) {
             java.util.Map.Entry<Integer, MDoc.Key> e = curKeyEntry();
-            MDoc.Layer L = doc.layer(st.layer);
+            MDoc.Layer L = lay(st.layer);
             boolean tw = e != null && e.getValue().tween;
             boolean ok = tw && L != null && MDoc.tweenOk(L, e.getKey());
             tweenBtn.setText(e == null ? "—" : tw ? (ok ? "↝ Movimiento (toca para quitar)" : "↝ Falta el clave final")

@@ -15,6 +15,7 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 
 /**
  * La mesa de trabajo (escenario): donde se dibuja, se selecciona y se mueve.
@@ -29,7 +30,11 @@ public final class StageView extends View {
         void submit(JSONObject op);
         /** Cuentagotas: colores tomados de una forma. */
         void picked(int stroke, int fill, float width);
-        void selChanged(int n);
+        /** Cambió la selección; inst = la instancia de símbolo si es lo único elegido. */
+        void selChanged(int n, MDoc.Shape inst);
+        /** Doble toque en una instancia: editar su símbolo en el lugar. */
+        void enterSymbol(int layer, int frame, int index);
+        void exitSymbol();
         int shownFrame();
         boolean playing();
         String status();
@@ -84,12 +89,27 @@ public final class StageView extends View {
     private int selL = -1, selK = -1;
 
     public void clearSel() {
-        if (!sel.isEmpty()) { sel.clear(); host.selChanged(0); }
+        if (!sel.isEmpty()) { sel.clear(); notifySel(); }
         subIdx = -1; subCopy = null;
         invalidate();
     }
 
-    private MDoc.Layer curLayer() { return host.doc().layer(host.st().layer); }
+    /** Capas de la línea de tiempo en que se trabaja (la escena o el símbolo que se edita). */
+    private List<MDoc.Layer> timeline() { return host.doc().timeline(host.st().sym); }
+
+    private MDoc.Layer curLayer() {
+        List<MDoc.Layer> T = timeline();
+        int l = host.st().layer;
+        return l >= 0 && l < T.size() ? T.get(l) : null;
+    }
+
+    private void notifySel() {
+        MDoc.Key k = curKey();
+        MDoc.Shape inst = null;
+        if (sel.size() == 1 && k != null && sel.get(0) < k.shapes.size() && k.shapes.get(sel.get(0)).isInst())
+            inst = k.shapes.get(sel.get(0));
+        host.selChanged(sel.size(), inst);
+    }
 
     private MDoc.Key curKey() {
         MDoc.Layer L = curLayer();
@@ -100,7 +120,7 @@ public final class StageView extends View {
     private void validateSel() {
         MDoc.Layer L = curLayer();
         int k = L == null ? -1 : MDoc.keyIndex(L, host.st().frame);
-        if (host.st().layer != selL || k != selK) { sel.clear(); selL = host.st().layer; selK = k; host.selChanged(0); }
+        if (host.st().layer != selL || k != selK) { sel.clear(); selL = host.st().layer; selK = k; notifySel(); }
         MDoc.Key key = curKey();
         int n = key == null ? 0 : key.shapes.size();
         for (int i = sel.size() - 1; i >= 0; i--) if (sel.get(i) >= n) sel.remove(i);
@@ -114,13 +134,16 @@ public final class StageView extends View {
         selL = host.st().layer;
         MDoc.Layer L = curLayer();
         selK = L == null ? -1 : MDoc.keyIndex(L, host.st().frame);
-        host.selChanged(sel.size());
+        notifySel();
     }
 
     // ---------------------------------------------------------------- órdenes
     private JSONObject op(String name) {
         JSONObject o = new JSONObject();
-        try { o.put("op", name); o.put("l", host.st().layer); o.put("f", host.st().frame); } catch (JSONException ignored) { }
+        try {
+            o.put("op", name); o.put("l", host.st().layer); o.put("f", host.st().frame);
+            if (host.st().inSymbol()) o.put("sym", host.st().sym);
+        } catch (JSONException ignored) { }
         return o;
     }
 
@@ -153,6 +176,7 @@ public final class StageView extends View {
         ArrayList<MDoc.Shape> ss = new ArrayList<>();
         for (int i : sel) {
             MDoc.Shape sh = k.shapes.get(i).copy();
+            if (sh.isInst()) continue; // los colores de un símbolo se cambian dentro de él
             if ("s".equals(which)) { if (sh.brush) sh.stroke = st.fill != 0 ? st.fill : st.stroke; else sh.stroke = st.stroke; }
             else if ("f".equals(which)) { if (sh.brush) sh.stroke = st.fill != 0 ? st.fill : sh.stroke; else sh.fill = st.fill; }
             else if ("w".equals(which)) { sh.width = sh.brush ? st.width * 3 + 2 : st.width; }
@@ -168,7 +192,7 @@ public final class StageView extends View {
         try { o.put("is", new JSONArray(sel)); } catch (JSONException ignored) { }
         sel.clear();
         host.submit(o);
-        host.selChanged(0);
+        notifySel();
     }
 
     public void orderSelection(boolean front) {
@@ -178,7 +202,61 @@ public final class StageView extends View {
         try { o.put("is", new JSONArray(sel)); o.put("to", front ? "front" : "back"); } catch (JSONException ignored) { }
         sel.clear();
         host.submit(o);
-        host.selChanged(0);
+        notifySel();
+    }
+
+    /** Convierte lo seleccionado en un símbolo gráfico (queda una instancia en su lugar). */
+    public void convertToSymbol() {
+        validateSel();
+        if (sel.isEmpty()) { Ui.toast(getContext(), "Selecciona primero lo que será el símbolo (herramienta Selección)"); return; }
+        if (!editable()) return;
+        JSONObject o = op("toSym");
+        try {
+            o.put("is", new JSONArray(sel));
+            o.put("id", "y" + Long.toString(System.currentTimeMillis(), 36) + Integer.toString((int) (Math.random() * 1296), 36));
+        } catch (JSONException ignored) { }
+        sel.clear();
+        host.submit(o);
+        notifySel();
+        Ui.toast(getContext(), "Símbolo gráfico creado: toca dos veces para animarlo por dentro");
+    }
+
+    /** Cómo se repite el símbolo elegido: 0 repetir, 1 una vez, 2 un solo fotograma. */
+    public void setInstLoop(int mode, int first) {
+        validateSel();
+        MDoc.Key k = curKey();
+        if (k == null) return;
+        ArrayList<Integer> idx = new ArrayList<>();
+        ArrayList<MDoc.Shape> ss = new ArrayList<>();
+        for (int i : sel) {
+            MDoc.Shape sh = k.shapes.get(i);
+            if (!sh.isInst()) continue;
+            sh = sh.copy();
+            if (mode >= 0) sh.loop = mode;
+            if (first >= 0) sh.first = first;
+            idx.add(i); ss.add(sh);
+        }
+        if (idx.isEmpty()) { Ui.toast(getContext(), "Selecciona un símbolo"); return; }
+        submitSet(idx, ss);
+        notifySel();
+    }
+
+    /** Entra a editar el símbolo seleccionado (como el doble toque). */
+    public void editSelectedSymbol() {
+        validateSel();
+        MDoc.Key k = curKey();
+        if (k != null && sel.size() == 1 && k.shapes.get(sel.get(0)).isInst()) enter(sel.get(0));
+        else Ui.toast(getContext(), "Selecciona un símbolo");
+    }
+
+    private void enter(int i) {
+        if (host.st().inSymbol()) { Ui.toast(getContext(), "Primero vuelve a la escena (↩)"); return; }
+        MDoc.Layer L = curLayer();
+        int kf = L == null ? -1 : MDoc.keyIndex(L, host.st().frame);
+        sel.clear();
+        notifySel();
+        host.enterSymbol(host.st().layer, host.st().frame, i);
+        if (kf < 0) invalidate();
     }
 
     /** Al cambiar de herramienta: termina el trazado de la pluma. */
@@ -190,7 +268,8 @@ public final class StageView extends View {
 
     // ---------------------------------------------------------------- dibujo
     private final RectF tmp = new RectF();
-    private final RectF chipMenu = new RectF(), chipFit = new RectF(), chipDone = new RectF(), chipCancel = new RectF();
+    private final RectF chipMenu = new RectF(), chipFit = new RectF(), chipDone = new RectF(), chipCancel = new RectF(),
+            chipBack = new RectF();
 
     @Override protected void onDraw(Canvas c) {
         MDoc d = host.doc();
@@ -208,10 +287,23 @@ public final class StageView extends View {
         for (int k = 1; k <= 3; k++)
             c.drawRect(k * 2 * hair, k * 3 * hair, d.w + k * 2 * hair, d.h + k * 3 * hair, shadowP);
         c.drawRect(0, 0, d.w, d.h, stageP);
-        if (st.onion && !playing) Render.onion(c, d, f, 2, hair);
+        Render.use(d);
+        boolean inSym = st.inSymbol() && !playing;
+        List<MDoc.Layer> T = inSym ? timeline() : d.layers;
+        if (inSym) {
+            // editar en el lugar: la escena atenuada detrás y el símbolo encima, donde está su instancia
+            c.saveLayerAlpha(null, 0x55);
+            Render.skip(editInst());
+            Render.frame(c, d, st.pf, true, false, hair);
+            Render.skip(null);
+            c.restore();
+            c.save();
+            c.concat(base(mtx2));
+        }
+        if (st.onion && !playing) Render.onion(c, T, f, 2, hair);
 
-        for (int i = d.layers.size() - 1; i >= 0; i--) {
-            MDoc.Layer L = d.layers.get(i);
+        for (int i = T.size() - 1; i >= 0; i--) {
+            MDoc.Layer L = T.get(i);
             if (!L.vis || L.audio) continue;
             MDoc.Pose ps = i == st.layer && !playing ? curPose() : MDoc.pose(L, f);
             if (ps == null) continue;
@@ -220,6 +312,7 @@ public final class StageView extends View {
             MDoc.Key k = ps.key;
             int save = ps.alpha < 1 && outline == 0 ? c.saveLayerAlpha(null, Math.round(ps.alpha * 255)) : c.save();
             c.concat(Render.matrix(ps, mtx));
+            Render.at(ps.frame - ps.keyFrame);
             float lh = 1.5f * hair / poseScale(ps);
             for (int j = 0; j < k.shapes.size(); j++) {
                 MDoc.Shape sh = k.shapes.get(j);
@@ -237,17 +330,54 @@ public final class StageView extends View {
             // lo que se dibuja sobre la capa actual va en sus coordenadas (con su transformación)
             MDoc.Pose cp = curPose();
             c.save();
-            if (cp != null) c.concat(Render.matrix(cp, mtx));
+            if (cp != null) { c.concat(Render.matrix(cp, mtx)); Render.at(cp.frame - cp.keyFrame); }
             drawOverlay(c, d, st, hair / poseScale(cp));
             c.restore();
             if (st.tool == State.FREE) drawFreeBox(c, hair);
+        }
+        if (inSym) {
+            // punto de registro del símbolo (su centro)
+            p(Paint.Style.STROKE, Ui.INK, 1.5f * hair);
+            c.drawLine(-8 * dp * hair, 0, 8 * dp * hair, 0, p);
+            c.drawLine(0, -8 * dp * hair, 0, 8 * dp * hair, p);
+            c.restore();
         }
         c.restore();
 
         drawChips(c, playing);
     }
 
-    private final Matrix mtx = new Matrix(), inv = new Matrix();
+    private final Matrix mtx = new Matrix(), mtx2 = new Matrix(), inv = new Matrix(), invBase = new Matrix();
+
+    /** La instancia por la que se entró a editar el símbolo (null si se está en la escena o ya no existe). */
+    private MDoc.Shape editInst() {
+        State st = host.st();
+        if (!st.inSymbol()) return null;
+        MDoc.Layer PL = host.doc().layer(st.pl);
+        MDoc.Pose pp = PL == null ? null : MDoc.pose(PL, st.pf);
+        if (pp == null || st.pi < 0 || st.pi >= pp.key.shapes.size()) return null;
+        MDoc.Shape sh = pp.key.shapes.get(st.pi);
+        return sh.isInst() && st.sym.equals(sh.sym) ? sh : null;
+    }
+
+    /** Matriz del símbolo que se edita en el lugar → escena (identidad si se está en la escena). */
+    private Matrix base(Matrix out) {
+        out.reset();
+        State st = host.st();
+        MDoc.Shape inst = editInst();
+        if (inst == null) return out;
+        MDoc.Pose pp = MDoc.pose(host.doc().layer(st.pl), st.pf);
+        Render.matrix(pp, out);
+        out.preTranslate(inst.n[0], inst.n[1]);
+        return out;
+    }
+
+    /** Punto de la escena → coordenadas del símbolo que se edita (o la escena). */
+    private float[] toBase(float x, float y) {
+        pt[0] = x; pt[1] = y;
+        invBase.mapPoints(pt);
+        return pt;
+    }
     private final float[] pt = new float[2];
 
     /** Pose de la capa actual en el fotograma que se ve (o la que se está transformando). */
@@ -263,9 +393,15 @@ public final class StageView extends View {
 
     /** Punto del documento → coordenadas propias de la capa actual (deshace su transformación). */
     private void prepareLocal() {
+        Matrix b = base(mtx2);
+        b.invert(invBase);
         MDoc.Pose p = curPose();
-        if (p == null) inv.reset();
-        else Render.matrix(p, mtx).invert(inv);
+        Matrix full = new Matrix();
+        if (p != null) Render.matrix(p, full);
+        full.postConcat(b);
+        full.invert(inv);
+        Render.use(host.doc());
+        if (p != null) Render.at(p.frame - p.keyFrame);
     }
 
     private float[] local(float x, float y) {
@@ -291,7 +427,7 @@ public final class StageView extends View {
             }
             p.setPathEffect(null);
             if (st.tool == State.SUB) for (int i : sel) {
-                if (i >= k.shapes.size()) continue;
+                if (i >= k.shapes.size() || k.shapes.get(i).isInst()) continue;
                 drawNodes(c, i == subIdx && subCopy != null ? subCopy : k.shapes.get(i), hair, -1);
             }
         }
@@ -352,6 +488,12 @@ public final class StageView extends View {
         float w = textP.measureText(st) + 28 * dp;
         tmp.set(m, m, m + w, m + h);
         chip(c, tmp, st, false);
+        if (host.st().inSymbol() && !playing) {
+            String b = "↩ " + host.doc().scene;
+            float bw = textP.measureText(b) + 28 * dp;
+            chipBack.set(m + w + 8 * dp, m, m + w + 8 * dp + bw, m + h);
+            chip(c, chipBack, b, true);
+        } else chipBack.setEmpty();
         chipMenu.set(getWidth() - m - h * 1.4f, m, getWidth() - m, m + h);
         chip(c, chipMenu, "☰", false);
         String z = Math.round(s * 100) + " %";
@@ -380,6 +522,8 @@ public final class StageView extends View {
     private ArrayList<float[]> pen;        // nodos de la pluma en construcción
     private boolean penClosing, penFinishing, penNew;
     private int subIdx = -1, subNode = -1, subPart;
+    private long lastTap;
+    private int lastTapI = -2, lastHit = -1;
     private MDoc.Shape subCopy;
 
     @Override public boolean onTouchEvent(MotionEvent e) {
@@ -403,14 +547,15 @@ public final class StageView extends View {
             gesture = true;
             blocked = false;
             lsx = x; lsy = y;
-            if (host.st().tool == State.FREE) { freeDown(dx(x), dy(y)); invalidate(); return true; }
+            if (chipBack.contains(x, y)) { host.exitSymbol(); return true; }
             prepareLocal();
+            if (host.st().tool == State.FREE) { float[] b = toBase(dx(x), dy(y)); freeDown(b[0], b[1]); invalidate(); return true; }
             float[] q = local(dx(x), dy(y));
             down(q[0], q[1]);
         } else if (!gesture) {
             return true;
         } else if (a == MotionEvent.ACTION_MOVE) {
-            if (host.st().tool == State.FREE) freeMove(dx(x), dy(y));
+            if (host.st().tool == State.FREE) { float[] b = toBase(dx(x), dy(y)); freeMove(b[0], b[1]); }
             else { float[] q = local(dx(x), dy(y)); move(q[0], q[1], x, y); }
             lsx = x; lsy = y;
         } else if (a == MotionEvent.ACTION_UP) {
@@ -479,6 +624,7 @@ public final class StageView extends View {
                 if (curLayer() == null) return;
                 MDoc.Key k = curKey();
                 int i = Render.hitKey(k, x, y, tol(), Render.HIT_FILL | Render.HIT_STROKE);
+                lastHit = i;
                 if (i >= 0) {
                     if (!sel.contains(i)) { ArrayList<Integer> l = new ArrayList<>(); l.add(i); setSel(l); }
                     moving = true; mdx = mdy = 0;
@@ -538,6 +684,19 @@ public final class StageView extends View {
         cx = x; cy = y;
         switch (st.tool) {
             case State.SEL: {
+                long now = System.currentTimeMillis();
+                if (!dragged) {
+                    int hitI = moving && sel.size() >= 1 ? lastHit : -1;
+                    boolean dbl = now - lastTap < 380 && hitI == lastTapI;
+                    lastTap = now; lastTapI = hitI;
+                    if (dbl) {
+                        MDoc.Key k = curKey();
+                        if (hitI >= 0 && k != null && hitI < k.shapes.size() && k.shapes.get(hitI).isInst()) {
+                            moving = false; enter(hitI); lastTap = 0; return;
+                        }
+                        if (hitI < 0 && host.st().inSymbol()) { marquee = false; lastTap = 0; host.exitSymbol(); return; }
+                    }
+                }
                 if (moving) {
                     moving = false;
                     if (dragged && editable()) {
@@ -603,6 +762,7 @@ public final class StageView extends View {
                 int i = Render.hitKey(k, x, y, tol(), Render.HIT_STROKE | Render.HIT_FILL);
                 if (i < 0) return;
                 MDoc.Shape sh = k.shapes.get(i).copy();
+                if (sh.isInst()) return;
                 if (st.stroke == 0 && !sh.closed) { Ui.toast(getContext(), "Una línea abierta necesita color de trazo"); return; }
                 sh.stroke = st.stroke;
                 if (!sh.brush) sh.width = st.width;
@@ -615,6 +775,7 @@ public final class StageView extends View {
                 int i = Render.hitKey(k, x, y, tol(), Render.HIT_STROKE | Render.HIT_FILL);
                 if (i < 0) return;
                 MDoc.Shape sh = k.shapes.get(i);
+                if (sh.isInst()) return;
                 if (sh.brush) host.picked(st.stroke, sh.stroke, Math.max(1, (sh.width - 2) / 3));
                 else host.picked(sh.stroke, sh.closed ? sh.fill : st.fill, sh.width);
             }
@@ -752,6 +913,7 @@ public final class StageView extends View {
         for (int si : sel) {
             if (si >= k.shapes.size()) continue;
             MDoc.Shape sh = k.shapes.get(si);
+            if (sh.isInst()) continue;
             for (int i = 0; i < sh.count(); i++) {
                 float nx = sh.n[i * 6], ny = sh.n[i * 6 + 1];
                 for (int part = 1; part <= 2; part++) { // primero las manillas (si están separadas del nodo)

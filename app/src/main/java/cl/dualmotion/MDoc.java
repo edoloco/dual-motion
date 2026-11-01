@@ -9,6 +9,7 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -28,16 +29,25 @@ public final class MDoc {
         /** Colores ARGB; 0 = sin contorno / sin relleno. */
         public int stroke = 0xFF000000, fill;
         public float width = 2;
+        /**
+         * Instancia de un símbolo gráfico (sym = id del símbolo): se dibuja la línea de tiempo del símbolo en
+         * el punto n[0], n[1]. first = fotograma del símbolo con que empieza; loop: 0 repetir, 1 una vez,
+         * 2 un solo fotograma.
+         */
+        public String sym;
+        public int first, loop;
         transient Path path;
         transient RectF bounds;
 
         public int count() { return n.length / 6; }
         public void dirty() { path = null; bounds = null; }
+        public boolean isInst() { return sym != null; }
 
         public Shape copy() {
             Shape s = new Shape();
             s.n = n.clone(); s.closed = closed; s.brush = brush;
             s.stroke = stroke; s.fill = fill; s.width = width;
+            s.sym = sym; s.first = first; s.loop = loop;
             return s;
         }
 
@@ -56,6 +66,7 @@ public final class MDoc {
             if (stroke != 0) o.put("s", stroke);
             if (fill != 0) o.put("f", fill);
             o.put("w", Math.round(width * 100) / 100.0);
+            if (sym != null) { o.put("y", sym); if (first != 0) o.put("ff", first); if (loop != 0) o.put("lp", loop); }
             return o;
         }
 
@@ -70,8 +81,45 @@ public final class MDoc {
             s.stroke = o.optInt("s", 0);
             s.fill = o.optInt("f", 0);
             s.width = (float) o.optDouble("w", 2);
+            if (o.has("y")) { s.sym = o.optString("y"); s.first = Math.max(0, o.optInt("ff")); s.loop = clamp(o.optInt("lp"), 0, 2); }
             return s;
         }
+    }
+
+    // ---------------------------------------------------------------- símbolo gráfico
+    /** Símbolo gráfico: un dibujo con su propia línea de tiempo, que se pone en la escena como instancias. */
+    public static final class Symbol {
+        public String id, name;
+        public final ArrayList<Layer> layers = new ArrayList<>();
+
+        JSONObject toJson() throws JSONException {
+            JSONObject o = new JSONObject();
+            o.put("id", id); o.put("name", name);
+            JSONArray ls = new JSONArray();
+            for (Layer L : layers) ls.put(L.toJson());
+            o.put("layers", ls);
+            return o;
+        }
+
+        static Symbol from(JSONObject o) {
+            Symbol S = new Symbol();
+            S.id = o.optString("id"); S.name = o.optString("name", "Símbolo");
+            JSONArray ls = o.optJSONArray("layers");
+            if (ls != null) for (int i = 0; i < ls.length(); i++) {
+                JSONObject lo = ls.optJSONObject(i);
+                if (lo != null) S.layers.add(Layer.from(lo));
+            }
+            if (S.layers.isEmpty()) { Layer L = new Layer(); L.name = "Capa 1"; L.keys.put(0, new Key()); S.layers.add(L); }
+            return S;
+        }
+    }
+
+    /** Fotograma del símbolo que muestra una instancia, "elapsed" fotogramas después de su clave. */
+    public static int symFrame(Shape inst, int elapsed, int symLen) {
+        int n = Math.max(1, symLen);
+        if (inst.loop == 2) return Math.min(inst.first, n - 1);
+        int f = inst.first + Math.max(0, elapsed);
+        return inst.loop == 1 ? Math.min(f, n - 1) : f % n;
     }
 
     // ---------------------------------------------------------------- fotograma clave y capa
@@ -140,6 +188,7 @@ public final class MDoc {
     public static final class Pose {
         public Key key;          // formas que se dibujan
         public int keyFrame;     // número del clave de donde vienen
+        public int frame;        // fotograma pedido (frame - keyFrame = cuánto lleva el clave: anima los símbolos)
         public boolean tweening; // true si es un fotograma intermedio de una interpolación
         public float tx, ty, sx = 1, sy = 1, rot, alpha = 1, px, py;
     }
@@ -153,6 +202,7 @@ public final class MDoc {
         Pose p = new Pose();
         p.key = A;
         p.keyFrame = a.getKey();
+        p.frame = f;
         p.tx = A.tx; p.ty = A.ty; p.sx = A.sx; p.sy = A.sy; p.rot = A.rot; p.alpha = A.alpha; p.px = A.px; p.py = A.py;
         if (!A.tween || f == a.getKey()) return p;
         Map.Entry<Integer, Key> b = L.keys.higherEntry(f);
@@ -314,6 +364,9 @@ public final class MDoc {
     public final ArrayList<Layer> layers = new ArrayList<>();
     /** Biblioteca de sonidos del documento. */
     public final ArrayList<Sound> sounds = new ArrayList<>();
+    /** Biblioteca de símbolos gráficos. */
+    public final ArrayList<Symbol> symbols = new ArrayList<>();
+    public int symSeq = 1;
 
     public MDoc() { reset(); }
 
@@ -321,6 +374,8 @@ public final class MDoc {
         w = 1280; h = 720; fps = 24; scene = "Escena 1"; seq = 1;
         layers.clear();
         sounds.clear();
+        symbols.clear();
+        symSeq = 1;
         layers.add(newLayer());
         undo.clear(); redo.clear();
     }
@@ -338,10 +393,26 @@ public final class MDoc {
     }
 
     /** Largo de la animación = la capa de dibujo más larga (el sonido no alarga la animación). */
-    public int length() {
+    public int length() { return length(layers); }
+
+    /** Largo de una línea de tiempo (la escena o la de un símbolo). */
+    public static int length(List<Layer> T) {
         int n = 1;
-        for (Layer L : layers) if (!L.audio) n = Math.max(n, L.len);
+        for (Layer L : T) if (!L.audio) n = Math.max(n, L.len);
         return n;
+    }
+
+    public Symbol symbol(String id) {
+        if (id == null) return null;
+        for (Symbol S : symbols) if (S.id.equals(id)) return S;
+        return null;
+    }
+
+    /** Capas de la escena (sym vacío) o de un símbolo. */
+    public List<Layer> timeline(String sym) {
+        if (sym == null || sym.isEmpty()) return layers;
+        Symbol S = symbol(sym);
+        return S == null ? layers : S.layers;
     }
 
     /** Duración de la animación en ms. */
@@ -387,6 +458,12 @@ public final class MDoc {
                 for (Sound s : sounds) ss.put(s.toJson());
                 o.put("sounds", ss);
             }
+            if (!symbols.isEmpty()) {
+                JSONArray ys = new JSONArray();
+                for (Symbol S : symbols) ys.put(S.toJson());
+                o.put("symbols", ys);
+                o.put("symSeq", symSeq);
+            }
         } catch (JSONException ignored) { }
         return o;
     }
@@ -415,6 +492,13 @@ public final class MDoc {
         if (ss != null) for (int i = 0; i < ss.length(); i++) {
             JSONObject so = ss.optJSONObject(i);
             if (so != null) sounds.add(Sound.from(so));
+        }
+        symbols.clear();
+        symSeq = Math.max(1, o.optInt("symSeq", 1));
+        JSONArray ys = o.optJSONArray("symbols");
+        if (ys != null) for (int i = 0; i < ys.length(); i++) {
+            JSONObject yo = ys.optJSONObject(i);
+            if (yo != null) symbols.add(Symbol.from(yo));
         }
     }
 
@@ -463,6 +547,11 @@ public final class MDoc {
 
     private boolean applyOp(JSONObject m) throws JSONException {
         String op = m.optString("op");
+        // las órdenes de capas y fotogramas actúan sobre la escena o, con "sym", sobre la línea de tiempo del símbolo
+        String sy = m.optString("sym", "");
+        Symbol S = null;
+        if (!sy.isEmpty()) { S = symbol(sy); if (S == null) return false; }
+        final List<Layer> T = S == null ? layers : S.layers;
         switch (op) {
             case "undo": return undoRedo(undo, redo);
             case "redo": return undoRedo(redo, undo);
@@ -474,8 +563,12 @@ public final class MDoc {
                 push(-1); fps = v; return true;
             }
             case "layerAdd": {
+                boolean audio = m.optInt("audio") == 1;
+                if (audio && S != null) return false; // el sonido va en la escena
                 push(-1);
-                layers.add(clamp(m.optInt("at", 0), 0, layers.size()), newLayer(m.optInt("audio") == 1));
+                Layer nl = newLayer(audio);
+                if (S != null) nl.name = "Capa " + (T.size() + 1);
+                T.add(clamp(m.optInt("at", 0), 0, T.size()), nl);
                 return true;
             }
             case "sndAdd": { // agrega un sonido a la biblioteca (el archivo ya llegó a los dos teléfonos)
@@ -490,19 +583,26 @@ public final class MDoc {
             }
             case "layerDel": {
                 int l = m.optInt("l", -1);
-                if (layers.size() <= 1 || l < 0 || l >= layers.size()) return false;
-                push(-1); layers.remove(l); return true;
+                if (T.size() <= 1 || l < 0 || l >= T.size()) return false;
+                push(-1); T.remove(l); return true;
             }
             case "layerMove": {
                 int l = m.optInt("l", -1), to = m.optInt("to", -1);
-                if (l < 0 || l >= layers.size() || to < 0 || to >= layers.size() || l == to) return false;
-                push(-1); layers.add(to, layers.remove(l)); return true;
+                if (l < 0 || l >= T.size() || to < 0 || to >= T.size() || l == to) return false;
+                push(-1); T.add(to, T.remove(l)); return true;
+            }
+            case "symName": {
+                Symbol Y = symbol(m.optString("id"));
+                if (Y == null) return false;
+                push(-1); Y.name = m.optString("name", Y.name); return true;
             }
         }
 
         int l = m.optInt("l", -1);
-        if (l < 0 || l >= layers.size()) return false;
-        Layer L = layers.get(l);
+        if (l < 0 || l >= T.size()) return false;
+        Layer L = T.get(l);
+        // deshacer: en la escena basta guardar la capa; dentro de un símbolo se guarda todo
+        final int pl = S == null ? l : -1;
         int f = Math.max(0, m.optInt("f", 0));
         boolean clipOp = op.startsWith("clip");
         if (L.audio != clipOp && !"layer".equals(op)) return false; // el audio no se dibuja; el dibujo no tiene clips
@@ -511,21 +611,21 @@ public final class MDoc {
             case "clipAdd": {
                 Clip c = Clip.from(m.getJSONObject("c"));
                 if (sound(c.s) == null) return false;
-                push(l);
+                push(pl);
                 L.clips.add(c);
                 return true;
             }
             case "clipSet": {
                 int i = m.optInt("i", -1);
                 if (i < 0 || i >= L.clips.size()) return false;
-                push(l);
+                push(pl);
                 L.clips.set(i, Clip.from(m.getJSONObject("c")));
                 return true;
             }
             case "clipDel": {
                 int i = m.optInt("i", -1);
                 if (i < 0 || i >= L.clips.size()) return false;
-                push(l);
+                push(pl);
                 L.clips.remove(i);
                 return true;
             }
@@ -534,7 +634,7 @@ public final class MDoc {
                 if (i < 0 || i >= L.clips.size()) return false;
                 Clip c = L.clips.get(i);
                 if (t <= c.at || t >= c.end()) return false;
-                push(l);
+                push(pl);
                 Clip b = c.copy();
                 int cut = t - c.at;
                 c.len = cut;
@@ -543,7 +643,7 @@ public final class MDoc {
                 return true;
             }
             case "layer": {
-                push(l);
+                push(pl);
                 if (m.has("name")) L.name = m.optString("name", L.name);
                 if (m.has("vis")) L.vis = m.optBoolean("vis");
                 if (m.has("lock")) L.lock = m.optBoolean("lock");
@@ -553,7 +653,7 @@ public final class MDoc {
             case "key": { // F6 (copia la clave anterior) o F7 (blank = clave vacía)
                 if (L.keys.containsKey(f)) return false;
                 boolean blank = m.optInt("blank") == 1;
-                push(l);
+                push(pl);
                 Map.Entry<Integer, Key> prev = L.keys.floorEntry(f);
                 Key nk;
                 if (blank || prev == null) nk = new Key();
@@ -561,20 +661,21 @@ public final class MDoc {
                     Pose ps = pose(L, f);
                     nk = prev.getValue().copy();
                     if (ps != null && ps.tweening) poseInto(ps, nk); // dentro de una interpolación: toma lo interpolado
+                    advance(nk, f - prev.getKey());
                 }
                 L.keys.put(f, nk);
                 if (f >= L.len) L.len = f + 1;
                 return true;
             }
             case "frame": { // F5: inserta un fotograma (lo que sigue se corre a la derecha)
-                push(l);
+                push(pl);
                 if (f >= L.len) L.len = f + 1;
                 else { shift(L, f + 1, 1); L.len++; }
                 return true;
             }
             case "delFrame": { // Mayús+F5
                 if (f >= L.len) return false;
-                push(l);
+                push(pl);
                 if (L.len == 1) { L.keys.clear(); L.keys.put(0, new Key()); return true; }
                 Key k = L.keys.remove(f);
                 // si se borra un clave que sigue en el fotograma siguiente, su contenido pasa a ese fotograma
@@ -586,17 +687,18 @@ public final class MDoc {
             }
             case "clearKey": { // Mayús+F6: el fotograma pasa a extender el clave anterior
                 if (f == 0 || !L.keys.containsKey(f)) return false;
-                push(l); L.keys.remove(f); return true;
+                push(pl); L.keys.remove(f); return true;
             }
             case "xf": { // transformación del clave (posición, escala, giro, alfa, punto de giro)
                 if (f >= L.len) return false;
-                push(l);
+                push(pl);
                 Key k = L.keys.get(f);
                 if (k == null) {
                     Pose ps = pose(L, f);
                     if (ps != null && ps.tweening) { // en medio de una interpolación: crea ahí un clave (como en Flash)
                         k = ps.key.copy();
                         poseInto(ps, k);
+                        advance(k, f - ps.keyFrame);
                         L.keys.put(f, k);
                     } else k = L.keys.floorEntry(f).getValue();
                 }
@@ -615,7 +717,7 @@ public final class MDoc {
                 if (e == null) return false;
                 boolean on = m.optBoolean("on", true);
                 if (e.getValue().tween == on) return false;
-                push(l);
+                push(pl);
                 e.getValue().tween = on;
                 // Flash: si no hay clave final, se crea uno al final del tramo
                 if (on && L.keys.higherKey(e.getKey()) == null) {
@@ -631,7 +733,7 @@ public final class MDoc {
                 Map.Entry<Integer, Key> e = f < L.len ? L.keys.floorEntry(f) : null;
                 JSONArray c = m.optJSONArray("c");
                 if (e == null || c == null || c.length() != 4) return false;
-                push(l);
+                push(pl);
                 for (int i = 0; i < 4; i++) {
                     float v = (float) c.optDouble(i);
                     e.getValue().ease[i] = i % 2 == 0 ? Math.max(0, Math.min(1, v)) : Math.max(-1, Math.min(2, v));
@@ -641,14 +743,14 @@ public final class MDoc {
             case "spin": {
                 Map.Entry<Integer, Key> e = f < L.len ? L.keys.floorEntry(f) : null;
                 if (e == null) return false;
-                push(l);
+                push(pl);
                 e.getValue().spin = clamp(m.optInt("n"), -20, 20);
                 return true;
             }
             case "add": {
                 Shape s = Shape.from(m.getJSONObject("s"));
                 if (s.count() == 0) return false;
-                push(l);
+                push(pl);
                 editKey(L, f).shapes.add(s);
                 return true;
             }
@@ -656,7 +758,7 @@ public final class MDoc {
                 Key k = keyAt(L, f);
                 JSONArray is = m.optJSONArray("is"), ss = m.optJSONArray("ss");
                 if (k == null || is == null || ss == null) return false;
-                push(l);
+                push(pl);
                 for (int i = 0; i < is.length() && i < ss.length(); i++) {
                     int idx = is.optInt(i, -1);
                     JSONObject so = ss.optJSONObject(i);
@@ -670,9 +772,48 @@ public final class MDoc {
                 if (k == null || is == null || is.length() == 0) return false;
                 ArrayList<Integer> list = indices(is, k.shapes.size());
                 if (list.isEmpty()) return false;
-                push(l);
+                push(pl);
                 Collections.sort(list, Collections.reverseOrder());
                 for (int idx : list) k.shapes.remove(idx);
+                return true;
+            }
+            case "toSym": { // convertir lo elegido en símbolo gráfico: queda una instancia en su lugar
+                Key k = keyAt(L, f);
+                JSONArray is = m.optJSONArray("is");
+                String id = m.optString("id");
+                if (k == null || is == null || id.isEmpty() || symbol(id) != null) return false;
+                ArrayList<Integer> list = indices(is, k.shapes.size());
+                if (list.isEmpty()) return false;
+                push(-1);
+                Collections.sort(list);
+                float x0 = Float.MAX_VALUE, y0 = Float.MAX_VALUE, x1 = -Float.MAX_VALUE, y1 = -Float.MAX_VALUE;
+                for (int idx : list) {
+                    Shape sh = k.shapes.get(idx);
+                    int cnt = sh.isInst() ? 1 : sh.count() * 3;
+                    for (int j = 0; j < cnt; j++) {
+                        float x = sh.n[j * 2], y = sh.n[j * 2 + 1];
+                        x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+                    }
+                }
+                float cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+                Symbol Y = new Symbol();
+                Y.id = id;
+                Y.name = m.optString("name", "");
+                if (Y.name.isEmpty()) Y.name = "Símbolo " + symSeq;
+                symSeq++;
+                Layer SL = new Layer();
+                SL.name = "Capa 1";
+                Key k0 = new Key();
+                for (int idx : list) { Shape sh = k.shapes.get(idx).copy(); sh.translate(-cx, -cy); k0.shapes.add(sh); }
+                SL.keys.put(0, k0);
+                Y.layers.add(SL);
+                for (int i = list.size() - 1; i >= 0; i--) k.shapes.remove((int) list.get(i));
+                Shape inst = new Shape();
+                inst.sym = id;
+                inst.n = new float[]{cx, cy, cx, cy, cx, cy};
+                inst.stroke = 0; inst.width = 0;
+                k.shapes.add(Math.min(list.get(0), k.shapes.size()), inst);
+                symbols.add(Y);
                 return true;
             }
             case "order": { // al frente / atrás
@@ -681,7 +822,7 @@ public final class MDoc {
                 if (k == null || is == null) return false;
                 ArrayList<Integer> list = indices(is, k.shapes.size());
                 if (list.isEmpty()) return false;
-                push(l);
+                push(pl);
                 Collections.sort(list);
                 ArrayList<Shape> moved = new ArrayList<>();
                 for (int i = list.size() - 1; i >= 0; i--) moved.add(0, k.shapes.remove((int) list.get(i)));
@@ -691,6 +832,12 @@ public final class MDoc {
             }
         }
         return false;
+    }
+
+    /** Las instancias de un clave copiado "más adelante" siguen su animación donde iba (no vuelven a empezar). */
+    private static void advance(Key k, int frames) {
+        if (frames <= 0) return;
+        for (Shape sh : k.shapes) if (sh.isInst() && sh.loop != 2) sh.first += frames;
     }
 
     private static void poseInto(Pose p, Key k) {

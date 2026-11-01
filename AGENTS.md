@@ -95,9 +95,37 @@ manillas = escalar, por fuera de las esquinas = girar; escala y giro alrededor d
 = cerrar, último punto o "✓ Terminar" = terminar), Línea, Rectángulo, Óvalo, Lápiz, Pincel (usa el color de
 relleno), Cubo de pintura, Bote de tinta, Cuentagotas, Borrador (borra formas enteras), Mano.
 
+## Símbolos gráficos
+
+- `MDoc.Symbol {id, name, layers}`: un dibujo con su propia línea de tiempo. En la escena se pone como
+  **instancia**: una `Shape` con `sym` (id), posición en `n[0], n[1]`, `first` (fotograma con que empieza) y
+  `loop` (0 repetir, 1 una vez, 2 un solo fotograma). La instancia muestra `MDoc.symFrame(inst, elapsed, largo)`,
+  donde elapsed = fotogramas que lleva su clave (`Pose.frame - Pose.keyFrame`): así un mono que camina por dentro
+  se repite en ciclo mientras la capa se interpola de izquierda a derecha. Al copiar un clave más adelante (F6 o
+  `xf` en medio de una interpolación) las instancias avanzan `first` para no volver a empezar.
+- `toSym {l,f,is,id}`: lo elegido pasa a un símbolo nuevo (centrado en su punto de registro) y queda una instancia.
+- Toda orden de capas y fotogramas puede llevar `sym`: actúa sobre la línea de tiempo de ese símbolo
+  (`MDoc.timeline(sym)`); dentro de un símbolo el deshacer guarda el documento entero. Sin sonido en símbolos.
+- `Render` busca los símbolos en el documento de su hilo (`Render.use(doc)`), dibuja instancias recursivamente
+  (hasta 8 niveles) y mide/toca instancias por su rectángulo (`instBounds`, `Render.at(elapsed)`).
+- **Editar en el lugar**: doble toque con Selección sobre una instancia (o "✎ Editar el símbolo"). `State.sym` = id,
+  `pl, pf, pi` = capa, fotograma e índice de la instancia en la escena. La mesa dibuja la escena atenuada y el
+  símbolo encima con la matriz de su instancia (`StageView.base`); la línea de tiempo muestra las capas del
+  símbolo. Volver: doble toque fuera, chip "↩ Escena 1" en la mesa, o tocar la ruta arriba en el principal.
+  El extendido pide entrar/salir con `moEnter {l,f,i}` / `moExit` (el estado lo decide el principal).
+- Panel derecho: "◈ Convertir en símbolo" o, con un símbolo elegido, Repetir / Una vez / 1 foto y Editar
+  (`moCmd` `toSym`, `loop0..2`, `editSym`). `moSel {n, sym, lp}`.
+
+## Cerrar
+
+⏻ en el encabezado del principal o ☰ › Cerrar DUAL Motion: guarda, manda `moQuit`, apaga el servicio y cierra
+en los dos teléfonos.
+
 ## Línea de tiempo (principal)
 
-- Encabezado: ＋ capa, − capa, ♪ agregar sonido (crea una capa de sonido arriba de la actual si hace falta y pone
+- Mantener presionado el nombre de una capa: Renombrar, Eliminar capa, Insertar capa encima, Subir, Bajar,
+  Ocultar/Mostrar, Bloquear.
+- Encabezado: ＋ capa, − capa (elimina la actual), ♪ agregar sonido (crea una capa de sonido arriba de la actual si hace falta y pone
   el sonido en el cabezal). En las filas de sonido: arrastrar un trozo = moverlo (por fotogramas); arrastrar sus
   bordes = recortar; mantener = menú (cortar en el cabezal, llevar al cabezal, volumen, duplicar, borrar).
   ✂ en la barra corta en el cabezal.
@@ -110,7 +138,8 @@ relleno), Cubo de pintura, Bote de tinta, Cuentagotas, Borrador (borra formas en
    sincronizado, papel cebolla, vista previa a pantalla completa en el principal, guardado automático.
 2. ✅ Animación clásica: interpolación de movimiento (posición, escala, giro, alfa) con curva de aceleración y
    giros; transformación libre; guardar/abrir `.dmo`.
-3. Símbolos: biblioteca, gráfico, clip de película, botón; instancias; editar en el lugar.
+3. Símbolos: ✅ gráfico (con ciclo, una vez, un fotograma), instancias, editar en el lugar. Falta: panel de
+   biblioteca, clip de película, botón, color/filtros por instancia.
 4. Interpolación de forma, guía de movimiento, máscara, filtros, mezcla; operaciones entre trazados.
 5. Publicar: ✅ MP4 con sonido y ✅ capas de sonido; falta GIF y secuencia PNG.
 6. Acciones simples, video de referencia, Lottie.

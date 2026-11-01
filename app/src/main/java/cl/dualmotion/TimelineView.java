@@ -25,7 +25,10 @@ public final class TimelineView extends View {
         void addLayer();
         void delLayer();
         void frameMenu(int layer, int frame);
-        void rename(int layer);
+        /** Mantener presionado el nombre: menú de la capa (renombrar, eliminar, subir, bajar…). */
+        void layerMenu(int layer);
+        /** Capas de la línea de tiempo que se ve (la escena o el símbolo que se edita). */
+        java.util.List<MDoc.Layer> layers();
         /** Botón ♪: agregar un sonido. */
         void addSound();
         /** Un trozo de sonido se movió o se recortó. */
@@ -63,9 +66,9 @@ public final class TimelineView extends View {
 
     private void clampScroll() {
         MDoc d = host.doc();
-        int frames = Math.max(d.length(), host.st().frame + 1) + 60;
+        int frames = Math.max(MDoc.length(host.layers()), host.st().frame + 1) + 60;
         scrollX = Math.max(0, Math.min(scrollX, frames * cellW - gridW()));
-        scrollY = Math.max(0, Math.min(scrollY, d.layers.size() * rowH - (getHeight() - headerH)));
+        scrollY = Math.max(0, Math.min(scrollY, host.layers().size() * rowH - (getHeight() - headerH)));
     }
 
     /** Desplaza la grilla para que se vea el fotograma f. */
@@ -91,10 +94,12 @@ public final class TimelineView extends View {
         // ---- filas
         c.save();
         c.clipRect(0, headerH, w, h);
-        for (int l = 0; l < d.layers.size(); l++) {
+        java.util.List<MDoc.Layer> T = host.layers();
+        if (host.st().inSymbol()) { p.setStyle(Paint.Style.FILL); p.setColor(0xFFF3EEFB); c.drawRect(0, headerH, nameW, h, p); }
+        for (int l = 0; l < T.size(); l++) {
             float y = headerH + l * rowH - scrollY;
             if (y > h || y + rowH < headerH) continue;
-            MDoc.Layer L = d.layers.get(l);
+            MDoc.Layer L = T.get(l);
             if (L.audio) drawAudio(c, L, l, y, f0, f1);
             else drawFrames(c, L, l, y, f0, f1, st, cur);
             drawName(c, L, l == st.layer, y);
@@ -301,10 +306,10 @@ public final class TimelineView extends View {
         longDone = true;
         performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
         int l = rowAt(downY);
-        if (l < 0 || l >= host.doc().layers.size()) return;
+        if (l < 0 || l >= host.layers().size()) return;
         if (zone == 2 && dragI >= 0) { dragClip = null; host.clipMenu(dragL, dragI); invalidate(); return; }
         if (zone == 2) { int f = frameAt(downX); if (f >= 0) { host.select(l, f); host.frameMenu(l, f); } }
-        else if (zone == 1) host.rename(l);
+        else if (zone == 1) host.layerMenu(l);
     }
 
     @Override public boolean onTouchEvent(MotionEvent e) {
@@ -364,7 +369,7 @@ public final class TimelineView extends View {
         }
         if (zone == 0) return;
         int l = rowAt(y);
-        if (l < 0 || l >= host.doc().layers.size()) return;
+        if (l < 0 || l >= host.layers().size()) return;
         if (zone == 1) {
             float ex0 = nameW - 3 * iconW;
             if (x >= ex0) {
@@ -453,7 +458,7 @@ public final class TimelineView extends View {
         dragI = -1;
         dragClip = null;
         int l = rowAt(y);
-        MDoc.Layer L = host.doc().layer(l);
+        MDoc.Layer L = l >= 0 && l < host.layers().size() ? host.layers().get(l) : null;
         if (L == null || !L.audio) return;
         for (int i = L.clips.size() - 1; i >= 0; i--) {
             MDoc.Clip k = L.clips.get(i);

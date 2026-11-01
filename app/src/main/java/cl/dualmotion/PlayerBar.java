@@ -30,6 +30,7 @@ public final class PlayerBar extends View {
         void toggleLoop();
         void toggleOnion();
         void fpsMenu();
+        java.util.List<MDoc.Layer> layers();
     }
 
     static final int RED = 0xFFFF0033, CARD = 0xFF2A2A2A, BG = 0xFF141414;
@@ -87,7 +88,7 @@ public final class PlayerBar extends View {
         int w = getWidth(), h = getHeight();
         layout(w, h);
         MDoc d = host.doc();
-        int f = host.shownFrame(), len = d.length();
+        int f = host.shownFrame(), len = host.playing() ? d.length() : MDoc.length(host.layers());
         r.set(0, 0, w, h);
         p.setStyle(Paint.Style.FILL);
         p.setColor(BG);
@@ -122,7 +123,7 @@ public final class PlayerBar extends View {
         r.set(track.left, cy - 2 * dp, px, cy + 2 * dp);
         c.drawRoundRect(r, 2 * dp, 2 * dp, p);
         // marcas de los fotogramas clave de la capa actual
-        MDoc.Layer L = d.layer(host.st().layer);
+        MDoc.Layer L = host.st().layer < host.layers().size() ? host.layers().get(host.st().layer) : null;
         if (L != null && !L.audio && len > 1) {
             p.setColor(0xCCFFFFFF);
             for (int k : L.keys.keySet()) {
@@ -220,7 +221,7 @@ public final class PlayerBar extends View {
     }
 
     private void seekTo(float x) {
-        int len = host.doc().length();
+        int len = MDoc.length(host.layers());
         float u = Math.max(0, Math.min(1, (x - track.left) / Math.max(1, track.width())));
         int f = Math.round(u * (len - 1));
         if (f != host.st().frame) host.select(host.st().layer, f);
@@ -249,7 +250,7 @@ public final class PlayerBar extends View {
                 if (was || b < 0 || hit(x, y) != b) return true;
                 performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
                 State st = host.st();
-                int len = host.doc().length();
+                int len = MDoc.length(host.layers());
                 switch (b) {
                     case B_FIRST: host.select(st.layer, 0); break;
                     case B_PREV: host.select(st.layer, Math.max(0, st.frame - 1)); break;

@@ -116,6 +116,7 @@ public final class LinkService extends Service implements Net.Listener {
             case "moShow": if (MotionActivity.EDIT.equals(role)) showStage(); return;
             case "moUpdate": Updater.fromRemote(this); return;
             case "moSnd": Sounds.onChunk(this, m); return;
+            case "moQuit": if (client == null) { stopSelf(); return; } break; // sin pantalla abierta: solo se apaga
             case "moSndReq": Sounds.onRequest(this, m); return;
         }
         Net.Listener l = client;
