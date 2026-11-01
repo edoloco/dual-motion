@@ -347,10 +347,24 @@ public final class MotionActivity extends Activity
             final int tool = i;
             Ui.ToolButton tb = new Ui.ToolButton(this, i);
             tb.setOnClickListener(v -> setTool(tool));
+            if (i == State.BUCKET) tb.setOnLongClickListener(v -> { gapMenu(); return true; });
             toolBtns[i] = tb;
             line.addView(tb, new LinearLayout.LayoutParams(0, -1, 1));
         }
         return sv;
+    }
+
+    /** Cubo de pintura: cerrar huecos (como en Flash). */
+    private void gapMenu() {
+        String[] items = {"No cerrar huecos", "Cerrar huecos pequeños", "Cerrar huecos medianos", "Cerrar huecos grandes"};
+        for (int i = 0; i < items.length; i++) if (i == st.gap) items[i] += "   ✓";
+        new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setTitle("Cubo de pintura")
+                .setItems(items, (d, w) -> {
+                    st.gap = w;
+                    prefs.edit().putInt("gap", w).apply();
+                    setTool(State.BUCKET);
+                }).show();
     }
 
     private View buildControls() {
@@ -1586,6 +1600,7 @@ public final class MotionActivity extends Activity
         st.fill = prefs.getInt("fc", st.fill);
         st.width = prefs.getFloat("sw", st.width);
         st.onion = prefs.getBoolean("onion", false);
+        st.gap = prefs.getInt("gap", 1);
     }
 
     // ================================================================ piezas pequeñas

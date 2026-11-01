@@ -45,23 +45,37 @@ public final class Render {
     public static Path path(MDoc.Shape s) {
         if (s.path != null) return s.path;
         Path p = new Path();
-        float[] n = s.n;
         int c = s.count();
-        if (c > 0) {
-            p.moveTo(n[0], n[1]);
-            if (c == 1) p.lineTo(n[0] + 0.01f, n[1]);
-            for (int i = 1; i < c; i++) {
-                int a = (i - 1) * 6, b = i * 6;
-                p.cubicTo(n[a + 4], n[a + 5], n[b + 2], n[b + 3], n[b], n[b + 1]);
-            }
-            if (s.closed && c > 2) {
-                int a = (c - 1) * 6;
-                p.cubicTo(n[a + 4], n[a + 5], n[2], n[3], n[0], n[1]);
-                p.close();
+        if (s.sub == null) contour(p, s.n, 0, c, s.closed);
+        else { // relleno con huecos: varios contornos, se rellena par-impar
+            p.setFillType(Path.FillType.EVEN_ODD);
+            int a = 0;
+            for (int i = 0; i <= s.sub.length; i++) {
+                int b = i < s.sub.length ? s.sub[i] : c;
+                if (b > a) contour(p, s.n, a, b, s.closed);
+                a = b;
             }
         }
         s.path = p;
         return p;
+    }
+
+    /** Un contorno con los nodos [from, to). */
+    private static void contour(Path p, float[] n, int from, int to, boolean closed) {
+        int c = to - from;
+        if (c <= 0) return;
+        int o = from * 6;
+        p.moveTo(n[o], n[o + 1]);
+        if (c == 1) p.lineTo(n[o] + 0.01f, n[o + 1]);
+        for (int i = from + 1; i < to; i++) {
+            int a = (i - 1) * 6, b = i * 6;
+            p.cubicTo(n[a + 4], n[a + 5], n[b + 2], n[b + 3], n[b], n[b + 1]);
+        }
+        if (closed && c > 2) {
+            int a = (to - 1) * 6;
+            p.cubicTo(n[a + 4], n[a + 5], n[o + 2], n[o + 3], n[o], n[o + 1]);
+            p.close();
+        }
     }
 
     public static RectF bounds(MDoc.Shape s) {

@@ -749,11 +749,23 @@ public final class StageView extends View {
             case State.BUCKET: {
                 if (dragged || !editable()) return;
                 MDoc.Key k = curKey();
-                int i = Render.hitKey(k, x, y, tol() / 2, Render.HIT_INSIDE);
-                if (i < 0) { Ui.toast(getContext(), "Toca dentro de una forma cerrada"); return; }
-                MDoc.Shape sh = k.shapes.get(i).copy();
-                sh.fill = st.fill;
-                one(i, sh);
+                if (k == null) return;
+                if (st.fill == 0) { Ui.toast(getContext(), "Elige un color de relleno"); return; }
+                // como en Flash: rellena el área encerrada por los trazos, aunque sea a mano o con varias líneas
+                int inside = Render.hitKey(k, x, y, 0, Render.HIT_INSIDE);
+                float[] gaps = {0, 4, 10, 20};
+                float gapDoc = gaps[Math.max(0, Math.min(3, st.gap))] * dp / (s * poseScale(curPose()));
+                Fill.Result r = Fill.find(k, x, y, gapDoc, inside, st.fill);
+                if (r.recolor >= 0) {
+                    MDoc.Shape sh = k.shapes.get(r.recolor).copy();
+                    sh.fill = st.fill;
+                    one(r.recolor, sh);
+                } else if (r.shape != null) {
+                    JSONObject o = op("add");
+                    try { o.put("s", r.shape.toJson()); o.put("at", r.at); } catch (JSONException ignored) { }
+                    host.submit(o);
+                    validateSel();
+                } else if (r.error != null) Ui.toast(getContext(), r.error);
                 return;
             }
             case State.INK: {

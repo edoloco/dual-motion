@@ -96,7 +96,11 @@ ahí un clave con la pose interpolada.
 Selección (mover, marco), Subselección (nodos y manillas), Transformación libre (todo el clave: dentro = mover,
 manillas = escalar, por fuera de las esquinas = girar; escala y giro alrededor del centro), Pluma (tocar = recto, arrastrar = curva, primer punto
 = cerrar, último punto o "✓ Terminar" = terminar), Línea, Rectángulo, Óvalo, Lápiz, Pincel (usa el color de
-relleno), Cubo de pintura, Bote de tinta, Cuentagotas, Borrador (borra formas enteras), Mano.
+relleno), Cubo de pintura (como en Flash: rellena el área encerrada por los trazos alrededor del toque, aunque sea a mano o
+con varias líneas; `Fill`: trazos a imagen → inundar → contornos → forma de relleno sin trazo, con huecos por
+`Shape.sub` y relleno par-impar, que va detrás (orden `add` con `at`). Si el área es justo el interior de una
+forma cerrada, solo le cambia el relleno. Mantener presionado el cubo: cerrar huecos 0–3, `State.gap`),
+Bote de tinta, Cuentagotas, Borrador (borra formas enteras), Mano.
 
 ## Símbolos gráficos
 

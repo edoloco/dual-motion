@@ -36,6 +36,8 @@ public final class MDoc {
          */
         public String sym;
         public int first, loop;
+        /** Relleno con huecos: índices de nodo donde empieza cada contorno extra (null = un solo contorno). */
+        public int[] sub;
         transient Path path;
         transient RectF bounds;
 
@@ -48,6 +50,7 @@ public final class MDoc {
             s.n = n.clone(); s.closed = closed; s.brush = brush;
             s.stroke = stroke; s.fill = fill; s.width = width;
             s.sym = sym; s.first = first; s.loop = loop;
+            s.sub = sub == null ? null : sub.clone();
             return s;
         }
 
@@ -67,6 +70,7 @@ public final class MDoc {
             if (fill != 0) o.put("f", fill);
             o.put("w", Math.round(width * 100) / 100.0);
             if (sym != null) { o.put("y", sym); if (first != 0) o.put("ff", first); if (loop != 0) o.put("lp", loop); }
+            if (sub != null && sub.length > 0) { JSONArray b = new JSONArray(); for (int v : sub) b.put(v); o.put("sub", b); }
             return o;
         }
 
@@ -82,6 +86,13 @@ public final class MDoc {
             s.fill = o.optInt("f", 0);
             s.width = (float) o.optDouble("w", 2);
             if (o.has("y")) { s.sym = o.optString("y"); s.first = Math.max(0, o.optInt("ff")); s.loop = clamp(o.optInt("lp"), 0, 2); }
+            JSONArray b = o.optJSONArray("sub");
+            if (b != null && b.length() > 0) {
+                int cnt = s.count(), k = 0;
+                int[] v = new int[b.length()];
+                for (int i = 0; i < b.length(); i++) { int x = b.optInt(i); if (x > 0 && x < cnt && (k == 0 || x > v[k - 1])) v[k++] = x; }
+                if (k > 0) s.sub = java.util.Arrays.copyOf(v, k);
+            }
             return s;
         }
     }
@@ -754,7 +765,9 @@ public final class MDoc {
                 Shape s = Shape.from(m.getJSONObject("s"));
                 if (s.count() == 0) return false;
                 push(pl);
-                editKey(L, f).shapes.add(s);
+                Key ek = editKey(L, f);
+                int at = m.optInt("at", -1);
+                if (at >= 0 && at <= ek.shapes.size()) ek.shapes.add(at, s); else ek.shapes.add(s);
                 return true;
             }
             case "set": {
