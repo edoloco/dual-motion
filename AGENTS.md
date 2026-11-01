@@ -85,6 +85,11 @@ Las dos pantallas son UNA: lo repartido se comporta como un solo elemento.
 `clipSplit {l,i,t}` (clip `c = {s, at, in, len, v}` en ms). Las capas de sonido (`Layer.audio`) solo aceptan
 órdenes `clip*` y `layer`; no alargan la animación (`length()` mira solo las de dibujo).
 Dibujar en un fotograma después del final de la capa crea ahí un clave vacío (como en Flash).
+En los intermedios se interpola la pose del clave **y también el contenido** (`MDoc.between`): si los dos claves
+tienen la misma cantidad de formas y cada par es la misma (mismo símbolo o mismos nodos), se interpolan posición
+(lo movido con Selección), nodos, grosor y colores. Queda en caché por capa y `MDoc.version`. La mesa toca lo que
+se ve (`MDoc.shown`) y toda edición en un intermedio crea ahí un clave con lo interpolado (`editAt`), como en
+Flash; la interpolación sigue a los dos lados y los símbolos siguen su ciclo donde iban.
 Interpolación como en Flash 8: va del clave del tramo al **siguiente fotograma clave**, que es la referencia (lo
 que se anima hacia él). En la línea de tiempo el tramo violeta incluye el clave final y la flecha sale del punto
 del clave inicial y llega con la punta al punto del clave final (punteada si falta). `tween` sin clave final crea

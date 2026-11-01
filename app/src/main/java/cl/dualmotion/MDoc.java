@@ -227,7 +227,74 @@ public final class MDoc {
         p.rot = lerp(A.rot, B.rot + 360f * A.spin, e);
         p.alpha = lerp(A.alpha, B.alpha, e);
         p.px = lerp(A.px, B.px, e); p.py = lerp(A.py, B.py, e);
+        p.key = between(L, A, B, f, e);
         return p;
+    }
+
+    /** Cambia con cada orden aplicada: invalida los fotogramas intermedios ya calculados. */
+    static volatile int version;
+
+    /**
+     * Contenido de un fotograma intermedio, como en Flash: lo que cambió entre el clave inicial y el final se
+     * interpola (posición movida con Selección, nodos, grosor y colores), forma por forma, si las dos tienen la
+     * misma cantidad de formas y cada par es "la misma" (mismo símbolo, o misma cantidad de nodos).
+     * Se guarda en caché para que el mismo fotograma devuelva el mismo objeto (selección, edición en el lugar).
+     */
+    private static Key between(Layer L, Key A, Key B, int f, float e) {
+        if (L.cacheVer != version) { L.cache.clear(); L.cacheVer = version; }
+        Key K = L.cache.get(f);
+        if (K != null) return K;
+        K = A;
+        if (A.shapes.size() == B.shapes.size() && !A.shapes.isEmpty()) {
+            boolean diff = false;
+            Key X = new Key();
+            for (int i = 0; i < A.shapes.size(); i++) {
+                Shape a = A.shapes.get(i), b = B.shapes.get(i);
+                Shape m = lerpShape(a, b, e);
+                if (m != a) diff = true;
+                X.shapes.add(m);
+            }
+            if (diff) K = X;
+        }
+        if (L.cache.size() > 200) L.cache.clear();
+        L.cache.put(f, K);
+        return K;
+    }
+
+    private static Shape lerpShape(Shape a, Shape b, float e) {
+        if (a.isInst() != b.isInst()) return a;
+        if (a.isInst() && !a.sym.equals(b.sym)) return a;
+        if (a.n.length != b.n.length || a.closed != b.closed || !java.util.Arrays.equals(a.sub, b.sub)) return a;
+        boolean same = a.width == b.width && a.stroke == b.stroke && a.fill == b.fill && java.util.Arrays.equals(a.n, b.n);
+        if (same) return a;
+        Shape s = a.copy();
+        if (a.isInst()) {
+            float x = lerp(a.n[0], b.n[0], e), y = lerp(a.n[1], b.n[1], e);
+            s.n = new float[]{x, y, x, y, x, y};
+        } else for (int i = 0; i < s.n.length; i++) s.n[i] = lerp(a.n[i], b.n[i], e);
+        s.width = lerp(a.width, b.width, e);
+        s.stroke = lerpColor(a.stroke, b.stroke, e);
+        s.fill = lerpColor(a.fill, b.fill, e);
+        s.dirty();
+        return s;
+    }
+
+    private static int lerpColor(int a, int b, float e) {
+        if (a == b) return a;
+        if (a == 0) a = b & 0x00FFFFFF; // sin color → aparece con transparencia
+        if (b == 0) b = a & 0x00FFFFFF;
+        int r = 0;
+        for (int sh = 0; sh <= 24; sh += 8) {
+            int x = (a >>> sh) & 0xFF, y = (b >>> sh) & 0xFF;
+            r |= (Math.round(x + (y - x) * e) & 0xFF) << sh;
+        }
+        return r;
+    }
+
+    /** Lo que se ve de la capa en f (en un intermedio, el contenido interpolado). */
+    static Key shown(Layer L, int f) {
+        Pose p = pose(L, f);
+        return p == null ? null : p.key;
     }
 
     /** ¿La interpolación que empieza en este clave tiene clave final? */
@@ -307,6 +374,9 @@ public final class MDoc {
         /** Capa de audio: no tiene dibujo, sino trozos de sonido (puede tener varios). */
         public boolean audio;
         public final ArrayList<Clip> clips = new ArrayList<>();
+        /** Fotogramas intermedios de interpolación ya calculados (ver between). */
+        transient final java.util.HashMap<Integer, Key> cache = new java.util.HashMap<>();
+        transient int cacheVer = -1;
 
         JSONObject toJson() throws JSONException {
             JSONObject o = new JSONObject();
@@ -553,7 +623,32 @@ public final class MDoc {
     // ---------------------------------------------------------------- órdenes
     /** Aplica una orden. Devuelve true si cambió algo. */
     public boolean apply(JSONObject m) {
-        try { return applyOp(m); } catch (Exception e) { return false; }
+        version++;
+        try { return applyOp(m); } catch (Exception e) { return false; } finally { version++; }
+    }
+
+    /**
+     * Clave donde se edita lo que se ve en f. En medio de una interpolación (como en Flash) se crea ahí un
+     * fotograma clave con lo interpolado, y la interpolación sigue a los dos lados.
+     */
+    private static Key editAt(Layer L, int f) {
+        if (f >= L.len) return editKey(L, f);
+        Key k = L.keys.get(f);
+        if (k != null) return k;
+        Map.Entry<Integer, Key> a = L.keys.floorEntry(f);
+        Pose ps = pose(L, f);
+        if (ps != null && ps.tweening) {
+            Key A = a.getValue();
+            k = ps.key.copy();
+            poseInto(ps, k);
+            advance(k, f - ps.keyFrame);
+            k.tween = A.tween;
+            k.ease = A.ease.clone();
+            k.spin = 0;
+            L.keys.put(f, k);
+            return k;
+        }
+        return a.getValue();
     }
 
     private boolean applyOp(JSONObject m) throws JSONException {
@@ -666,12 +761,12 @@ public final class MDoc {
                 boolean blank = m.optInt("blank") == 1;
                 push(pl);
                 Map.Entry<Integer, Key> prev = L.keys.floorEntry(f);
+                Pose kps = blank || prev == null ? null : pose(L, f);
+                if (kps != null && kps.tweening) { editAt(L, f); return true; } // dentro de una interpolación: toma lo interpolado
                 Key nk;
                 if (blank || prev == null) nk = new Key();
                 else {
-                    Pose ps = pose(L, f);
                     nk = prev.getValue().copy();
-                    if (ps != null && ps.tweening) poseInto(ps, nk); // dentro de una interpolación: toma lo interpolado
                     advance(nk, f - prev.getKey());
                 }
                 // si el clave nuevo queda al final y no hay otro después, no hay hacia dónde interpolar
@@ -705,16 +800,7 @@ public final class MDoc {
             case "xf": { // transformación del clave (posición, escala, giro, alfa, punto de giro)
                 if (f >= L.len) return false;
                 push(pl);
-                Key k = L.keys.get(f);
-                if (k == null) {
-                    Pose ps = pose(L, f);
-                    if (ps != null && ps.tweening) { // en medio de una interpolación: crea ahí un clave (como en Flash)
-                        k = ps.key.copy();
-                        poseInto(ps, k);
-                        advance(k, f - ps.keyFrame);
-                        L.keys.put(f, k);
-                    } else k = L.keys.floorEntry(f).getValue();
-                }
+                Key k = editAt(L, f); // en medio de una interpolación: crea ahí un clave (como en Flash)
                 if (m.has("x")) k.tx = (float) m.getDouble("x");
                 if (m.has("y")) k.ty = (float) m.getDouble("y");
                 if (m.has("sx")) k.sx = (float) m.getDouble("sx");
@@ -765,42 +851,50 @@ public final class MDoc {
                 Shape s = Shape.from(m.getJSONObject("s"));
                 if (s.count() == 0) return false;
                 push(pl);
-                Key ek = editKey(L, f);
+                Key ek = editAt(L, f);
                 int at = m.optInt("at", -1);
                 if (at >= 0 && at <= ek.shapes.size()) ek.shapes.add(at, s); else ek.shapes.add(s);
                 return true;
             }
             case "set": {
-                Key k = keyAt(L, f);
+                Key k = shown(L, f);
                 JSONArray is = m.optJSONArray("is"), ss = m.optJSONArray("ss");
                 if (k == null || is == null || ss == null) return false;
                 push(pl);
+                // si el clave se crea ahora (en medio de una interpolación), los símbolos siguen su ciclo donde iban
+                int adv = L.keys.containsKey(f) || f >= L.len ? 0 : f - L.keys.floorKey(f);
+                k = editAt(L, f);
                 for (int i = 0; i < is.length() && i < ss.length(); i++) {
                     int idx = is.optInt(i, -1);
                     JSONObject so = ss.optJSONObject(i);
-                    if (idx >= 0 && idx < k.shapes.size() && so != null) k.shapes.set(idx, Shape.from(so));
+                    if (idx < 0 || idx >= k.shapes.size() || so == null) continue;
+                    Shape ns = Shape.from(so);
+                    if (adv > 0 && ns.isInst() && ns.loop != 2) ns.first += adv;
+                    k.shapes.set(idx, ns);
                 }
                 return true;
             }
             case "del": {
-                Key k = keyAt(L, f);
+                Key k = shown(L, f);
                 JSONArray is = m.optJSONArray("is");
                 if (k == null || is == null || is.length() == 0) return false;
                 ArrayList<Integer> list = indices(is, k.shapes.size());
                 if (list.isEmpty()) return false;
                 push(pl);
+                k = editAt(L, f);
                 Collections.sort(list, Collections.reverseOrder());
                 for (int idx : list) k.shapes.remove(idx);
                 return true;
             }
             case "breakApart": { // separar: cada instancia elegida se cambia por el dibujo que muestra en ese fotograma
-                Key k = keyAt(L, f);
+                Key k = shown(L, f);
                 JSONArray is = m.optJSONArray("is");
                 if (k == null || is == null) return false;
                 ArrayList<Integer> list = indices(is, k.shapes.size());
                 for (int i = list.size() - 1; i >= 0; i--) if (!k.shapes.get(list.get(i)).isInst()) list.remove(i);
                 if (list.isEmpty()) return false;
                 push(-1);
+                k = editAt(L, f);
                 int elapsed = f - L.keys.floorKey(f);
                 Collections.sort(list, Collections.reverseOrder());
                 for (int idx : list) {
@@ -812,13 +906,14 @@ public final class MDoc {
                 return true;
             }
             case "toSym": { // convertir lo elegido en símbolo gráfico: queda una instancia en su lugar
-                Key k = keyAt(L, f);
+                Key k = shown(L, f);
                 JSONArray is = m.optJSONArray("is");
                 String id = m.optString("id");
                 if (k == null || is == null || id.isEmpty() || symbol(id) != null) return false;
                 ArrayList<Integer> list = indices(is, k.shapes.size());
                 if (list.isEmpty()) return false;
                 push(-1);
+                k = editAt(L, f);
                 Collections.sort(list);
                 float x0 = Float.MAX_VALUE, y0 = Float.MAX_VALUE, x1 = -Float.MAX_VALUE, y1 = -Float.MAX_VALUE;
                 for (int idx : list) {
@@ -851,12 +946,13 @@ public final class MDoc {
                 return true;
             }
             case "order": { // al frente / atrás
-                Key k = keyAt(L, f);
+                Key k = shown(L, f);
                 JSONArray is = m.optJSONArray("is");
                 if (k == null || is == null) return false;
                 ArrayList<Integer> list = indices(is, k.shapes.size());
                 if (list.isEmpty()) return false;
                 push(pl);
+                k = editAt(L, f);
                 Collections.sort(list);
                 ArrayList<Shape> moved = new ArrayList<>();
                 for (int i = list.size() - 1; i >= 0; i--) moved.add(0, k.shapes.remove((int) list.get(i)));

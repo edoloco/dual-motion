@@ -111,9 +111,10 @@ public final class StageView extends View {
         host.selChanged(sel.size(), inst);
     }
 
+    /** Lo que se ve de la capa actual (en un intermedio de interpolación, lo interpolado). */
     private MDoc.Key curKey() {
         MDoc.Layer L = curLayer();
-        return L == null ? null : MDoc.keyAt(L, host.st().frame);
+        return L == null ? null : MDoc.shown(L, host.st().frame);
     }
 
     /** La selección vale solo para el clave donde se hizo. */

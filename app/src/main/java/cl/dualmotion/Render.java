@@ -241,7 +241,7 @@ public final class Render {
                     MDoc.Pose p = MDoc.pose(L, f + sgn * k);
                     if (p == null) continue;
                     if (!p.tweening && !hasInst(p.key) && !done.add(p.keyFrame)) continue;
-                    if (p.tweening && cur != null && cur.tweening && cur.keyFrame == p.keyFrame && same(cur, p)) continue;
+                    if (p.tweening && cur != null && cur.tweening && cur.keyFrame == p.keyFrame && same(cur, p) && p.key == cur.key) continue;
                     int a = k == 1 ? 0x99 : 0x55;
                     pose(c, p, withAlpha(sgn < 0 ? ONION_PREV : ONION_NEXT, a), 0, hair);
                 }
