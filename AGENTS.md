@@ -120,8 +120,13 @@ Bote de tinta, Cuentagotas, Borrador (borra formas enteras), Mano.
   símbolo encima con la matriz de su instancia (`StageView.base`); la línea de tiempo muestra las capas del
   símbolo. Volver: doble toque fuera, chip "↩ Escena 1" en la mesa, o tocar la ruta arriba en el principal.
   El extendido pide entrar/salir con `moEnter {l,f,i}` / `moExit` (el estado lo decide el principal).
-- Panel derecho: "◈ Convertir en símbolo" o, con un símbolo elegido, Repetir / Una vez / 1 foto y Editar
-  (`moCmd` `toSym`, `loop0..2`, `editSym`). `moSel {n, sym, lp}`.
+- Panel derecho: "◈ Convertir en símbolo" o, con un símbolo elegido, Repetir / Una vez / 1 foto, Editar y
+  Separar (`moCmd` `toSym`, `loop0..2`, `editSym`, `breakSym`). `moSel {n, sym, lp}`.
+- `breakApart {l,f,is}` (Separar, como Modificar › Separar de Flash): la instancia se cambia por el dibujo que
+  muestra en ese fotograma, con las poses de las capas del símbolo aplicadas (`MDoc.flatten`). El símbolo sigue
+  en el documento.
+- Como en Flash, un símbolo no se edita desde la escena: el cubo no lo pinta ni lo usa como borde, el borrador,
+  el bote de tinta, el cuentagotas y la subselección lo ignoran. Se mueve, se transforma y se borra (Selección + ✕).
 
 ## Cerrar
 

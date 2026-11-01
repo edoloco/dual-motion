@@ -241,6 +241,22 @@ public final class StageView extends View {
         notifySel();
     }
 
+    /** Separar (como Modificar › Separar de Flash): el símbolo elegido vuelve a ser dibujo normal. */
+    public void breakApart() {
+        validateSel();
+        MDoc.Key k = curKey();
+        ArrayList<Integer> is = new ArrayList<>();
+        if (k != null) for (int i : sel) if (k.shapes.get(i).isInst()) is.add(i);
+        if (is.isEmpty()) { Ui.toast(getContext(), "Selecciona un símbolo"); return; }
+        if (!editable()) return;
+        JSONObject o = op("breakApart");
+        try { o.put("is", new JSONArray(is)); } catch (JSONException ignored) { }
+        sel.clear();
+        host.submit(o);
+        notifySel();
+        Ui.toast(getContext(), "Separado: ahora es dibujo normal (↶ para deshacer)");
+    }
+
     /** Entra a editar el símbolo seleccionado (como el doble toque). */
     public void editSelectedSymbol() {
         validateSel();
@@ -751,6 +767,12 @@ public final class StageView extends View {
                 MDoc.Key k = curKey();
                 if (k == null) return;
                 if (st.fill == 0) { Ui.toast(getContext(), "Elige un color de relleno"); return; }
+                // un símbolo no se pinta desde afuera: se edita por dentro (como en Flash)
+                int top = Render.hitKey(k, x, y, 0, Render.HIT_FILL | Render.HIT_STROKE | Render.HIT_INSIDE);
+                if (top >= 0 && k.shapes.get(top).isInst()) {
+                    Ui.toast(getContext(), "Es un símbolo: tócalo dos veces con Selección para pintarlo por dentro");
+                    return;
+                }
                 // como en Flash: rellena el área encerrada por los trazos, aunque sea a mano o con varias líneas
                 int inside = Render.hitKey(k, x, y, 0, Render.HIT_INSIDE);
                 float[] gaps = {0, 4, 10, 20};
@@ -800,12 +822,21 @@ public final class StageView extends View {
         submitSet(idx, ss);
     }
 
+    private boolean instWarned;
+
     private void eraseAt(float x, float y) {
         MDoc.Key k = curKey();
         if (k == null) return;
-        for (int i = 0; i < k.shapes.size(); i++)
-            if (!erasing.contains(i) && Render.hit(k.shapes.get(i), x, y, 8 * dp / s, Render.HIT_FILL | Render.HIT_STROKE))
-                erasing.add(i);
+        for (int i = 0; i < k.shapes.size(); i++) {
+            MDoc.Shape sh = k.shapes.get(i);
+            if (erasing.contains(i) || !Render.hit(sh, x, y, 8 * dp / s, Render.HIT_FILL | Render.HIT_STROKE)) continue;
+            if (sh.isInst()) { // el borrador no borra símbolos (como en Flash)
+                if (!instWarned) Ui.toast(getContext(), "El borrador no borra símbolos: elígelo con Selección y toca ✕, o edítalo por dentro");
+                instWarned = true;
+                continue;
+            }
+            erasing.add(i);
+        }
     }
 
     // ---------------------------------------------------------------- formas básicas y mano alzada

@@ -553,6 +553,11 @@ public final class MotionActivity extends Activity
         LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(-1, dp(36));
         elp.topMargin = dp(4);
         symBox.addView(editSym, elp);
+        TextView breakSym = Ui.sym(this, "⤫  Separar (deja de ser símbolo)", "Vuelve a ser dibujo normal, como Modificar › Separar", () -> cmd("breakSym"));
+        breakSym.setTextSize(12);
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(-1, dp(36));
+        blp.topMargin = dp(4);
+        symBox.addView(breakSym, blp);
         col.addView(symBox);
 
         // ---- interpolación del clave actual
@@ -923,6 +928,7 @@ public final class MotionActivity extends Activity
                 case "loop0": stage.setInstLoop(0, -1); break;
                 case "loop1": stage.setInstLoop(1, -1); break;
                 case "loop2": stage.setInstLoop(2, -1); break;
+                case "breakSym": stage.breakApart(); break;
             }
             return;
         }

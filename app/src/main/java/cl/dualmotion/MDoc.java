@@ -793,6 +793,24 @@ public final class MDoc {
                 for (int idx : list) k.shapes.remove(idx);
                 return true;
             }
+            case "breakApart": { // separar: cada instancia elegida se cambia por el dibujo que muestra en ese fotograma
+                Key k = keyAt(L, f);
+                JSONArray is = m.optJSONArray("is");
+                if (k == null || is == null) return false;
+                ArrayList<Integer> list = indices(is, k.shapes.size());
+                for (int i = list.size() - 1; i >= 0; i--) if (!k.shapes.get(list.get(i)).isInst()) list.remove(i);
+                if (list.isEmpty()) return false;
+                push(-1);
+                int elapsed = f - L.keys.floorKey(f);
+                Collections.sort(list, Collections.reverseOrder());
+                for (int idx : list) {
+                    Shape inst = k.shapes.remove(idx);
+                    ArrayList<Shape> flat = new ArrayList<>();
+                    flatten(inst, elapsed, flat, 0);
+                    k.shapes.addAll(idx, flat);
+                }
+                return true;
+            }
             case "toSym": { // convertir lo elegido en símbolo gráfico: queda una instancia en su lugar
                 Key k = keyAt(L, f);
                 JSONArray is = m.optJSONArray("is");
@@ -848,6 +866,54 @@ public final class MDoc {
             }
         }
         return false;
+    }
+
+    /**
+     * El dibujo que muestra una instancia (en el fotograma que le toca), pasado a formas sueltas en las coordenadas
+     * del clave donde está: se aplica la pose de cada capa del símbolo y su alfa. Los símbolos dentro quedan como
+     * instancias (solo cambia su posición).
+     */
+    private void flatten(Shape inst, int elapsed, List<Shape> out, int depth) {
+        Symbol Y = symbol(inst.sym);
+        if (Y == null || depth > 8) return;
+        int sf = symFrame(inst, elapsed, length(Y.layers));
+        for (int i = Y.layers.size() - 1; i >= 0; i--) {   // de la capa de abajo a la de arriba
+            Layer SL = Y.layers.get(i);
+            if (SL.audio || !SL.vis) continue;
+            Pose p = pose(SL, sf);
+            if (p == null) continue;
+            double a = Math.toRadians(p.rot), cos = Math.cos(a), sin = Math.sin(a);
+            float scale = (Math.abs(p.sx) + Math.abs(p.sy)) / 2;
+            for (Shape s0 : p.key.shapes) {
+                Shape s = s0.copy();
+                if (s.isInst()) { // queda como símbolo, con su paso y su lugar
+                    float[] q = xform(s.n[0], s.n[1], p, cos, sin);
+                    s.n = new float[]{q[0], q[1], q[0], q[1], q[0], q[1]};
+                    if (s.loop != 2) s.first += sf - p.keyFrame;
+                } else {
+                    for (int j = 0; j + 1 < s.n.length; j += 2) {
+                        float[] q = xform(s.n[j], s.n[j + 1], p, cos, sin);
+                        s.n[j] = q[0]; s.n[j + 1] = q[1];
+                    }
+                    s.width *= scale;
+                    if (p.alpha < 1) { s.stroke = mulAlpha(s.stroke, p.alpha); s.fill = mulAlpha(s.fill, p.alpha); }
+                }
+                s.translate(inst.n[0], inst.n[1]);
+                out.add(s);
+            }
+        }
+    }
+
+    /** Punto del símbolo → coordenadas con la pose (escala y giro alrededor de px, py; luego traslado). */
+    private static float[] xform(float x, float y, Pose p, double cos, double sin) {
+        double u = (x - p.px) * p.sx, v = (y - p.py) * p.sy;
+        return new float[]{(float) (u * cos - v * sin + p.px + p.tx), (float) (u * sin + v * cos + p.py + p.ty)};
+    }
+
+    private static int mulAlpha(int c, float a) {
+        if (c == 0) return 0;
+        int al = Math.round((c >>> 24) * a);
+        return (c & 0x00FFFFFF) | (al << 24);
     }
 
     /** Las instancias de un clave copiado "más adelante" siguen su animación donde iba (no vuelven a empezar). */

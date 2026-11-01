@@ -142,7 +142,7 @@ final class Fill {
 
     /** Lo que encierra áreas: todo menos los rellenos sueltos (formas sin trazo, como los que deja el cubo). */
     private static boolean barrier(MDoc.Shape sh) {
-        if (sh.isInst()) return true;
+        if (sh.isInst()) return false; // como en Flash: un símbolo no es parte del dibujo de la escena
         if (sh.count() == 0) return false;
         return sh.stroke != 0 && sh.width > 0;
     }
