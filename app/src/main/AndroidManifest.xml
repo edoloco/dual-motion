@@ -13,6 +13,9 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- instalar sus propias actualizaciones -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- el aviso "toca para mostrar la mesa" puede abrirse solo a pantalla completa; y escuchar al encender -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- guardar el video en Películas en Android 9 -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
@@ -44,5 +47,13 @@
         <receiver
             android:name=".Updater$InstallReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name=".LinkService$Boot"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

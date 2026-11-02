@@ -109,6 +109,7 @@ public final class MotionActivity extends Activity
 
     private void start(String r) {
         role = r;
+        if (EDIT.equals(r)) { setShowWhenLocked(true); setTurnScreenOn(true); }
         if (!isView()) loadAutosave();
         if (!isEdit()) restoreState();
         if (isEdit()) buildEdit(); else buildMain();
@@ -125,6 +126,11 @@ public final class MotionActivity extends Activity
         if (android.os.Build.VERSION.SDK_INT >= 33 && !isSolo()
                 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 5);
+        if (isEdit() && xiaomi() && !prefs.getBoolean("miuiAsked", false)) {
+            prefs.edit().putBoolean("miuiAsked", true).putBoolean("overlayAsked", true).apply();
+            permsDialog();
+            return;
+        }
         if (isEdit() && !android.provider.Settings.canDrawOverlays(this) && !prefs.getBoolean("overlayAsked", false)) {
             prefs.edit().putBoolean("overlayAsked", true).apply();
             new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
@@ -141,6 +147,47 @@ public final class MotionActivity extends Activity
         }
     }
 
+    static boolean xiaomi() {
+        String m = (android.os.Build.MANUFACTURER + " " + android.os.Build.BRAND).toLowerCase(Locale.ROOT);
+        return m.contains("xiaomi") || m.contains("redmi") || m.contains("poco");
+    }
+
+    /** Lo que hace falta en este teléfono para que la mesa aparezca sola (y no se corte la conexión). */
+    private void permsDialog() {
+        boolean mi = xiaomi();
+        String msg = (isView() ? "Esto se revisa en el EXTENDIDO (el de la mesa). En este teléfono basta con permitir los avisos.\n\n" : "")
+                + "Para que la mesa aparezca sola al abrir DUAL Motion en el principal:\n\n"
+                + "• Mostrar sobre otras apps: " + (android.provider.Settings.canDrawOverlays(this) ? "listo ✓" : "falta") + "\n"
+                + (mi ? "• Xiaomi: en Otros permisos, activa \"Mostrar ventanas emergentes mientras se ejecuta en segundo plano\" "
+                        + "y \"Mostrar en pantalla de bloqueo\".\n• Xiaomi: activa el Inicio automático.\n"
+                        + "• Ahorro de batería de la app: Sin restricciones.\n" : "")
+                + "\nSi aun así no aparece, en el extendido sale un aviso de DUAL Motion para tocar.";
+        AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setTitle("Permisos para la mesa").setMessage(msg)
+                .setNegativeButton("Cerrar", null);
+        b.setPositiveButton(mi ? "Otros permisos" : "Mostrar sobre otras apps", (d, w) -> {
+            Intent i;
+            if (mi) i = new Intent("miui.intent.action.APP_PERM_EDITOR")
+                    .setClassName("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity")
+                    .putExtra("extra_pkgname", getPackageName());
+            else i = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName()));
+            openOr(i);
+        });
+        b.setNeutralButton(mi ? "Inicio automático" : "Ajustes de la app", (d, w) -> {
+            Intent i = mi ? new Intent().setComponent(new android.content.ComponentName("com.miui.securitycenter",
+                    "com.miui.permcenter.autostart.AutoStartManagementActivity")) : null;
+            openOr(i);
+        });
+        b.show();
+    }
+
+    /** Abre ese ajuste; si el teléfono no lo tiene, la ficha de la app. */
+    private void openOr(Intent i) {
+        try { if (i != null) { startActivity(i); return; } } catch (Exception ignored) { }
+        try { startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))); }
+        catch (Exception ignored) { }
+    }
+
     private boolean isView() { return VIEW.equals(role); }
     private boolean isEdit() { return EDIT.equals(role); }
     private boolean isSolo() { return SOLO.equals(role); }
@@ -151,9 +198,29 @@ public final class MotionActivity extends Activity
         super.onStart();
         visible = true;
         if (role == null) return;
-        if (isEdit()) send("moVis", "on", true);
-        else if (isView() && connected) send("moShow");
+        if (isEdit()) { send("moVis", "on", true); LinkService.cancelStageNotice(this); }
+        else if (isView() && connected) askStage();
     }
+
+    /**
+     * Principal: pide la mesa al extendido y lo vuelve a pedir si no aparece (en algunos teléfonos la primera vez
+     * se bloquea); si tampoco, avisa.
+     */
+    private void askStage() {
+        send("moShow");
+        ui.removeCallbacks(stageRetry);
+        stageTries = 0;
+        ui.postDelayed(stageRetry, 2500);
+    }
+
+    private int stageTries;
+    private final Runnable stageRetry = new Runnable() {
+        @Override public void run() {
+            if (!visible || !connected || stageShown || !isView()) return;
+            if (++stageTries <= 2) { send("moShow"); ui.postDelayed(this, 2500); }
+            else Ui.toast(MotionActivity.this, "La mesa no se abrió sola: en el extendido toca el aviso de DUAL Motion (☰ › Permisos en Xiaomi)");
+        }
+    };
 
     @Override protected void onStop() {
         super.onStop();
@@ -285,7 +352,7 @@ public final class MotionActivity extends Activity
         head.addView(docLabel, new LinearLayout.LayoutParams(0, -2, 1));
         connLabel = Ui.label(this, isSolo() ? "Un solo teléfono" : "Buscando el extendido…", 13, 0xFFFFFFFF);
         connLabel.setOnClickListener(v -> {
-            if (isView() && connected && !stageShown) { send("moShow"); Ui.toast(this, "Mostrando la mesa en el extendido…"); }
+            if (isView() && connected && !stageShown) { askStage(); Ui.toast(this, "Mostrando la mesa en el extendido…"); }
             else connectionDialog();
         });
         head.addView(connLabel);
@@ -1027,7 +1094,7 @@ public final class MotionActivity extends Activity
             }
         } else if (isView()) {
             if (!on) stageShown = false;
-            if (on) { stateChanged(null); if (visible) send("moShow"); }
+            if (on) { stateChanged(null); if (visible) askStage(); }
         }
         refreshAll();
     }
@@ -1454,8 +1521,8 @@ public final class MotionActivity extends Activity
     // ================================================================ menú
     @Override public void menu() {
         String[] items = {"Guardar", "Guardar como…", "Abrir…", "Nuevo documento", "Conexión",
-                "Cambiar el papel de este teléfono", "Buscar actualización", "Acerca de DUAL Motion",
-                "Exportar video (MP4)", "Agregar sonido…", "Cerrar DUAL Motion"};
+                "Cambiar el papel de este teléfono", "Buscar actualización", "Permisos para la mesa",
+                "Exportar video (MP4)", "Agregar sonido…", "Cerrar DUAL Motion", "Acerca de DUAL Motion"};
         new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
                 .setItems(items, (d, w) -> {
                     switch (w) {
@@ -1479,10 +1546,11 @@ public final class MotionActivity extends Activity
                             recreate();
                             break;
                         case 6: Updater.check(this); break;
-                        case 7: about(); break;
+                        case 7: permsDialog(); break;
                         case 8: exportVideo(); break;
                         case 9: addSound(); break;
                         case 10: askQuit(); break;
+                        case 11: about(); break;
                     }
                 }).show();
     }

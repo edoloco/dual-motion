@@ -124,11 +124,48 @@ public final class LinkService extends Service implements Net.Listener {
     }
 
     /** Extendido: trae la mesa de trabajo al frente (o deja un aviso si Android no lo permite). */
+    private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+
+    /**
+     * Extendido: trae la mesa al frente. Se intenta siempre (en Xiaomi puede bloquearse en silencio aunque haya
+     * permiso); si al rato no apareció, sale un aviso que se abre a pantalla completa (o se toca).
+     */
     private void showStage() {
         if (MotionActivity.visible) return;
-        Intent i = new Intent(this, MotionActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-        startOrNotify(this, i, 21, "DUAL Motion", "Toca para mostrar la mesa de trabajo");
+        final Intent i = new Intent(this, MotionActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        try { startActivity(i); } catch (Exception ignored) { }
+        main.postDelayed(() -> { if (!MotionActivity.visible) stageNotice(i); }, 1500);
+    }
+
+    private void stageNotice(Intent i) {
+        channels(this);
+        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) return;
+        PendingIntent pi = PendingIntent.getActivity(this, 21, i, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        Notification n = new Notification.Builder(this, CH_ALERT)
+                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setContentTitle("DUAL Motion")
+                .setContentText("Toca para mostrar la mesa de trabajo")
+                .setCategory(Notification.CATEGORY_CALL)
+                .setFullScreenIntent(pi, true)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build();
+        nm.notify(21, n);
+    }
+
+    static void cancelStageNotice(Context c) {
+        NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm != null) nm.cancel(21);
+    }
+
+    /** Al encender el teléfono: el extendido queda escuchando, para que la mesa aparezca al abrir el principal. */
+    public static final class Boot extends android.content.BroadcastReceiver {
+        @Override public void onReceive(Context c, Intent i) {
+            String role = c.getSharedPreferences("dm", MODE_PRIVATE).getString("role", null);
+            if (MotionActivity.EDIT.equals(role)) start(c, role);
+        }
     }
 
     // ---------------------------------------------------------------- avisos

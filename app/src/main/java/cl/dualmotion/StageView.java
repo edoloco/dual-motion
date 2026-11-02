@@ -540,6 +540,7 @@ public final class StageView extends View {
     private boolean penClosing, penFinishing, penNew;
     private int subIdx = -1, subNode = -1, subPart;
     private long lastTap;
+    private boolean ghost;
     private int lastTapI = -2, lastHit = -1;
     private MDoc.Shape subCopy;
 
@@ -555,6 +556,18 @@ public final class StageView extends View {
             return true;
         }
         float x = e.getX(), y = e.getY();
+        // toques que no son del usuario dibujando (como en DUAL-Draw): la palma o el canto de la mano (toque muy
+        // ancho) y los que empiezan pegados al borde (la unión entre los teléfonos, la mano que los sostiene)
+        if (a == MotionEvent.ACTION_DOWN) {
+            float mm = getResources().getDisplayMetrics().xdpi / 25.4f;
+            boolean finger = e.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER;
+            boolean edge = x < 4 * dp || y < 4 * dp || x > getWidth() - 4 * dp || y > getHeight() - 4 * dp;
+            ghost = finger && (e.getTouchMajor() > 20 * mm || edge);
+        }
+        if (ghost) {
+            if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) ghost = false;
+            return true;
+        }
         if (a == MotionEvent.ACTION_DOWN) {
             if (chipMenu.contains(x, y)) { host.menu(); return true; }
             if (chipFit.contains(x, y)) { fit(); return true; }
@@ -577,7 +590,14 @@ public final class StageView extends View {
             lsx = x; lsy = y;
         } else if (a == MotionEvent.ACTION_UP) {
             gesture = false;
-            if (host.st().tool == State.FREE) freeUp();
+            int tool = host.st().tool;
+            // un toque cortísimo sin mover el dedo no deja un punto con el lápiz o el pincel (suele ser un roce);
+            // para hacer un punto a propósito basta mantener el dedo un instante
+            if ((tool == State.PENCIL || tool == State.BRUSH) && !dragged && e.getEventTime() - e.getDownTime() < 120) {
+                cancelGesture();
+                return true;
+            }
+            if (tool == State.FREE) freeUp();
             else { float[] q = local(dx(x), dy(y)); up(q[0], q[1]); }
         } else if (a == MotionEvent.ACTION_CANCEL) {
             cancelGesture();

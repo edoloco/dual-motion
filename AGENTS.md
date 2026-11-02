@@ -75,6 +75,14 @@ Las dos pantallas son UNA: lo repartido se comporta como un solo elemento.
   (no si solo abrió un selector de archivos o un permiso: `keepStage`). El extendido responde `moVis {on}` y con
   `moHide` hace `moveTaskToBack`. El principal muestra "mesa a la vista / oculta (toca para mostrarla)".
 - El sonido suena solo en el principal (o en solo), nunca en la mesa.
+- Que la mesa aparezca en distintos teléfonos (Xiaomi bloquea abrir pantallas desde segundo plano): el principal
+  pide `moShow` y lo repite 2 veces cada 2,5 s si no llega `moVis {on:true}`; el extendido siempre intenta
+  `startActivity` y, si a los 1,5 s no se ve, deja un aviso con pantalla completa (`setFullScreenIntent`). La mesa
+  puede salir sobre la pantalla de bloqueo (`setShowWhenLocked`, `setTurnScreenOn`). Al encender el extendido,
+  `LinkService.Boot` deja la conexión escuchando. ☰ › Permisos para la mesa: en Xiaomi abre "Otros permisos"
+  (ventanas emergentes en segundo plano, pantalla de bloqueo) e Inicio automático.
+- Toques fantasma en la mesa (como en DUAL-Draw): la palma (toque > 20 mm) y los toques que empiezan a menos de
+  4 dp del borde no hacen nada; con lápiz o pincel, un toque de menos de 120 ms sin mover no deja un punto.
 
 ### Órdenes del documento
 `add {l,f,s}`, `set {l,f,is,ss}`, `del {l,f,is}`, `order {l,f,is,to}`, `key {l,f,blank?}` (F6/F7),
