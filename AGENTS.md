@@ -156,6 +156,10 @@ en los dos teléfonos.
 
 ## Línea de tiempo (principal)
 
+- Mover fotogramas clave (como en Flash): tocar un clave para elegirlo y arrastrarlo por su fila; un marco
+  naranjo muestra dónde queda. Orden `moveKey {l,f,to}` (si ahí había un clave, lo reemplaza; mover el primero
+  deja fotogramas vacíos antes). La barra de abajo lleva las teclas de Flash: "● F6", "○ F7", "F5 ＋" (insertar,
+  o extender la capa hasta el cabezal si está más allá del final), "F5 －" (quitar).
 - Mantener presionado el nombre de una capa: Renombrar, Eliminar capa, Insertar capa encima, Subir, Bajar,
   Ocultar/Mostrar, Bloquear.
 - Encabezado: ＋ capa, − capa (elimina la actual), ♪ agregar sonido (crea una capa de sonido arriba de la actual si hace falta y pone

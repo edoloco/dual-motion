@@ -34,6 +34,8 @@ public final class TimelineView extends View {
         /** Un trozo de sonido se movió o se recortó. */
         void clipChange(int layer, int index, MDoc.Clip c);
         void clipMenu(int layer, int index);
+        /** Se arrastró un fotograma clave a otro fotograma. */
+        void moveKey(int layer, int from, int to);
     }
 
     private final Host host;
@@ -109,6 +111,7 @@ public final class TimelineView extends View {
         }
         c.restore();
 
+        drawKeyDrag(c);
         // ---- regla de fotogramas y cabezal
         drawRuler(c, f0, f1, cur, w);
         p.setColor(0xFFBDBDBD);
@@ -325,6 +328,15 @@ public final class TimelineView extends View {
                 zone = y < headerH ? (x < nameW ? 3 : 0) : (x < nameW ? 1 : 2);
                 if (zone == 0) scrub(x);
                 if (zone == 2) clipDown(x, y);
+                // arrastrar el fotograma clave que ya está elegido lo mueve (como en Flash)
+                keyDragL = -1;
+                if (zone == 2 && dragI < 0) {
+                    int kl = rowAt(y), kf = frameAt(x);
+                    MDoc.Layer KL = kl >= 0 && kl < host.layers().size() ? host.layers().get(kl) : null;
+                    if (KL != null && !KL.audio && kl == host.st().layer && kf == host.st().frame && KL.keys.containsKey(kf)) {
+                        keyDragL = kl; keyDragFrom = kf; keyDragTo = kf;
+                    }
+                }
                 if (zone == 1 || zone == 2) postDelayed(longPress, 500);
                 return true;
             case MotionEvent.ACTION_MOVE:
@@ -332,6 +344,7 @@ public final class TimelineView extends View {
                 if (moved && !longDone) {
                     if (zone == 0) scrub(x);
                     else if (zone == 2 && dragI >= 0) clipMove(x);
+                    else if (keyDragL >= 0) { keyDragTo = Math.max(0, frameAt(x)); invalidate(); }
                     else if (zone == 1 || zone == 2) {
                         if (zone == 2) scrollX -= x - lastX;
                         scrollY -= y - lastY;
@@ -343,6 +356,14 @@ public final class TimelineView extends View {
                 return true;
             case MotionEvent.ACTION_UP:
                 removeCallbacks(longPress);
+                if (keyDragL >= 0 && moved && !longDone) {
+                    int kl = keyDragL;
+                    keyDragL = -1;
+                    if (keyDragTo != keyDragFrom) host.moveKey(kl, keyDragFrom, keyDragTo);
+                    invalidate();
+                    return true;
+                }
+                keyDragL = -1;
                 if (dragI >= 0 && moved && !longDone && dragClip != null) host.clipChange(dragL, dragI, dragClip);
                 else if (!moved && !longDone) tap(x, y);
                 dragClip = null;
@@ -351,6 +372,7 @@ public final class TimelineView extends View {
                 return true;
             case MotionEvent.ACTION_CANCEL:
                 removeCallbacks(longPress);
+                keyDragL = -1;
                 dragClip = null;
                 dragI = -1;
                 invalidate();
@@ -384,6 +406,24 @@ public final class TimelineView extends View {
         }
         int f = frameAt(x);
         if (f >= 0) host.select(l, f);
+    }
+
+    // ---------------------------------------------------------------- mover fotogramas clave
+    private int keyDragL = -1, keyDragFrom, keyDragTo;
+
+    /** Mientras se arrastra un clave: su punto en el lugar donde quedará, con un marco naranjo. */
+    private void drawKeyDrag(Canvas c) {
+        if (keyDragL < 0 || keyDragTo == keyDragFrom) return;
+        float y = headerH + keyDragL * rowH - scrollY, x = cellX(keyDragTo);
+        c.save();
+        c.clipRect(nameW, headerH, getWidth(), getHeight());
+        p.setStyle(Paint.Style.STROKE);
+        p.setStrokeWidth(2 * dp);
+        p.setColor(Ui.ORANGE);
+        c.drawRect(x + dp, y + dp, x + cellW - dp, y + rowH - dp, p);
+        p.setStyle(Paint.Style.FILL);
+        c.drawCircle(x + cellW / 2f, y + rowH - 9 * dp, 3.6f * dp, p);
+        c.restore();
     }
 
     // ---------------------------------------------------------------- capas de sonido

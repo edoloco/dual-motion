@@ -793,6 +793,16 @@ public final class MDoc {
                 if (!L.keys.containsKey(0)) L.keys.put(0, new Key());
                 return true;
             }
+            case "moveKey": { // arrastrar un fotograma clave a otro fotograma (si ahí había uno, lo reemplaza)
+                int to = m.optInt("to", -1);
+                if (to < 0 || to == f || !L.keys.containsKey(f)) return false;
+                push(pl);
+                Key k = L.keys.remove(f);
+                L.keys.put(to, k);
+                if (!L.keys.containsKey(0)) L.keys.put(0, new Key()); // antes del primer clave quedan fotogramas vacíos
+                if (to >= L.len) L.len = to + 1;
+                return true;
+            }
             case "clearKey": { // Mayús+F6: el fotograma pasa a extender el clave anterior
                 if (f == 0 || !L.keys.containsKey(f)) return false;
                 push(pl); L.keys.remove(f); return true;

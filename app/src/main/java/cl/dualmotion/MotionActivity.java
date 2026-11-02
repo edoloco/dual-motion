@@ -495,13 +495,25 @@ public final class MotionActivity extends Activity
         c.setGravity(Gravity.CENTER_VERTICAL);
         c.setPadding(dp(6), dp(4), dp(6), dp(4));
         Ui.panel(c, Ui.glass(this));
-        keyBtn = keyButton(c, false);
-        blankBtn = keyButton(c, true);
-        addBtn(c, "＋", "Insertar fotograma", () -> frameOp("frame", false));
-        addBtn(c, "－", "Quitar fotograma", () -> frameOp("delFrame", false));
+        // con sus teclas de Flash, para reconocerlos: F6 clave, F7 clave vacío, F5 fotograma, Mayús+F5 quitar
+        keyBtn = wide(keyButton(c, false));
+        blankBtn = wide(keyButton(c, true));
+        wide(addBtn(c, "F5 ＋", "Insertar fotograma (F5): alarga el tramo; más allá del final, extiende la capa hasta ahí",
+                () -> frameOp("frame", false)));
+        wide(addBtn(c, "F5 －", "Quitar fotograma (Mayús+F5)", () -> frameOp("delFrame", false)));
         addBtn(c, "↝", "Crear / quitar interpolación de movimiento", this::toggleTween);
         addBtn(c, "✂", "Cortar el sonido en el cabezal", this::cutClip);
         return c;
+    }
+
+    /** Botón ancho con texto chico (para "F5 ＋" y parecidos). */
+    private TextView wide(TextView t) {
+        t.setTextSize(14);
+        t.setSingleLine(true);
+        LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) t.getLayoutParams();
+        lp.width = dp(64);
+        t.setLayoutParams(lp);
+        return t;
     }
 
     // ================================================================ PlayerBar.Host
@@ -556,11 +568,11 @@ public final class MotionActivity extends Activity
     private void refreshKeyButtons() {
         if (keyBtn == null) return;
         boolean k = prefs.getBoolean("keyNext", false), b = prefs.getBoolean("blankNext", false);
-        keyBtn.setText(k ? "●→" : "●");
-        keyBtn.setTextSize(k ? 15 : 20);
+        keyBtn.setText(k ? "●→ F6" : "● F6");
+        keyBtn.setTextSize(14);
         keyBtn.setContentDescription(k ? "Insertar fotograma clave en el siguiente" : "Insertar fotograma clave");
-        blankBtn.setText(b ? "○→" : "○");
-        blankBtn.setTextSize(b ? 15 : 20);
+        blankBtn.setText(b ? "○→ F7" : "○ F7");
+        blankBtn.setTextSize(14);
         blankBtn.setContentDescription(b ? "Insertar clave vacío en el siguiente" : "Insertar fotograma clave vacío");
     }
 
@@ -1442,6 +1454,11 @@ public final class MotionActivity extends Activity
         if (L == null) return;
         boolean v = "vis".equals(which) ? !L.vis : "lock".equals(which) ? !L.lock : !L.out;
         request(op("layer", "l", layer, which, v));
+    }
+
+    @Override public void moveKey(int layer, int from, int to) {
+        request(op("moveKey", "l", layer, "f", from, "to", to));
+        select(layer, to);
     }
 
     @Override public void addLayer() { request(op("layerAdd", "at", st.layer)); }
