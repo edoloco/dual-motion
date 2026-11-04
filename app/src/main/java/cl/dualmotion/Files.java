@@ -22,6 +22,7 @@ import java.util.zip.ZipOutputStream;
  *   documento.json — el documento completo (capas, claves, formas, interpolaciones)
  *   dmo.txt        — marca de formato y versión
  *   sonidos/id.ext — los archivos de sonido de la biblioteca (tal como se importaron)
+ *   imagenes/id.png|jpg — las imágenes importadas
  * Más adelante irán aquí los bitmaps (PNG).
  * Se guarda y se abre con el selector de archivos de Android (el usuario elige la carpeta).
  */
@@ -53,7 +54,16 @@ final class Files {
         catch (Exception e) { Ui.toast(a, "Este teléfono no tiene selector de archivos"); }
     }
 
-    static final int REQ_AUDIO = 43;
+    static final int REQ_AUDIO = 43, REQ_IMAGE = 44;
+
+    /** Elegir una imagen (PNG, JPG, WebP…). */
+    static void pickImage(MotionActivity a) {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("image/*");
+        try { a.startActivityForResult(i, REQ_IMAGE); }
+        catch (Exception e) { Ui.toast(a, "Este teléfono no tiene selector de archivos"); }
+    }
 
     /** Elegir un archivo de sonido (mp3, m4a, wav, ogg…). */
     static void pickAudio(MotionActivity a) {
@@ -65,6 +75,10 @@ final class Files {
     }
 
     static void onResult(MotionActivity a, int req, int res, Intent data) {
+        if (req == REQ_IMAGE) {
+            if (res == Activity.RESULT_OK && data != null && data.getData() != null) a.importImage(data.getData());
+            return;
+        }
         if (req == REQ_AUDIO) {
             if (res == Activity.RESULT_OK && data != null && data.getData() != null) a.importSound(data.getData());
             return;
@@ -117,6 +131,17 @@ final class Files {
                     }
                     z.closeEntry();
                 }
+                for (MDoc.Image im : a.doc().images) {
+                    java.io.File f = Images.file(a, im.id, im.ext);
+                    if (!f.isFile()) continue;
+                    z.putNextEntry(new ZipEntry("imagenes/" + im.id + "." + im.ext));
+                    try (InputStream in = new java.io.FileInputStream(f)) {
+                        byte[] buf = new byte[65536];
+                        int n;
+                        while ((n = in.read(buf)) > 0) z.write(buf, 0, n);
+                    }
+                    z.closeEntry();
+                }
             }
             remember(a, u);
             Ui.toast(a, "Guardado: " + a.prefs().getString("docName", ""));
@@ -142,6 +167,9 @@ final class Files {
                     if (DOC_ENTRY.equals(nm)) {
                         JSONObject d = new JSONObject(new String(readAll(z), StandardCharsets.UTF_8));
                         if (d.has("layers")) doc = d;
+                    } else if (nm.startsWith("imagenes/") && nm.substring(9).matches("[a-z0-9]+\\.(png|jpg)")) {
+                        java.io.File f = new java.io.File(Images.dir(a), nm.substring(9));
+                        if (!f.isFile()) try (OutputStream o = new java.io.FileOutputStream(f)) { o.write(readAll(z)); }
                     } else if (nm.startsWith("sonidos/") && nm.substring(8).matches("[a-z0-9]+\\.[a-z0-9]{1,5}")) {
                         java.io.File f = new java.io.File(Sounds.dir(a), nm.substring(8));
                         if (!f.isFile()) try (OutputStream o = new java.io.FileOutputStream(f)) { o.write(readAll(z)); }

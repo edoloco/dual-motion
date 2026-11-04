@@ -51,7 +51,7 @@ final class Fill {
         RectF area = new RectF();
         boolean any = false;
         for (MDoc.Shape sh : k.shapes) {
-            if (sh.isInst() || sh.count() == 0) continue;
+            if (sh.isObj() || sh.count() == 0) continue;
             RectF b = Render.bounds(sh);
             if (!any) { area.set(b); any = true; } else area.union(b);
         }
@@ -60,7 +60,7 @@ final class Fill {
         // tocar sobre una línea no la rellena (como en Flash)
         for (int i = k.shapes.size() - 1; i >= 0; i--) {
             MDoc.Shape sh = k.shapes.get(i);
-            if (sh.isInst() || sh.count() == 0) continue;
+            if (sh.isObj() || sh.count() == 0) continue;
             if (sh.stroke != 0 && sh.width > 0 && Render.hit(sh, x, y, 0, Render.HIT_STROKE)) {
                 r.error = "Toca dentro del área, no sobre la línea";
                 return r;
@@ -80,7 +80,7 @@ final class Fill {
         c.scale(sc, sc);
         c.translate(-area.left, -area.top);
         if (o.all && scene != null) scene.draw(c);
-        else for (MDoc.Shape sh : k.shapes) if (!sh.isInst()) Render.shape(c, sh, 0, 0, 1);
+        else for (MDoc.Shape sh : k.shapes) if (!sh.isObj()) Render.shape(c, sh, 0, 0, 1);
         int[] px = new int[N];
         bm.getPixels(px, 0, W, 0, 0, W, H);
         bm.recycle();
@@ -116,7 +116,7 @@ final class Fill {
         boolean[] sm = new boolean[N];
         for (int i = 0; i < k.shapes.size(); i++) {
             MDoc.Shape sh = k.shapes.get(i);
-            if (sh.isInst() || !sh.closed || sh.fill == 0 || !near(sh.fill | 0xFF000000, target | 0xFF000000, o.tol)) continue;
+            if (sh.isObj() || !sh.closed || sh.fill == 0 || !near(sh.fill | 0xFF000000, target | 0xFF000000, o.tol)) continue;
             if (!RectF.intersects(Render.bounds(sh), area)) continue;
             int vis = 0, in = 0, tot = shapeMask(sh, area, sc, W, H, sm);
             for (int j = 0; j < N; j++) if (sm[j]) { if (ok[j]) { vis++; if (mark[j]) in++; } }
@@ -162,7 +162,7 @@ final class Fill {
             for (int i : r.remove) at = Math.min(at, i);
         } else for (int i = 0; i < k.shapes.size(); i++) {
             MDoc.Shape t = k.shapes.get(i);
-            if (!t.isInst() && t.closed && t.fill != 0 && Render.hit(t, x, y, 0, Render.HIT_INSIDE)) at = i + 1;
+            if (!t.isObj() && t.closed && t.fill != 0 && Render.hit(t, x, y, 0, Render.HIT_INSIDE)) at = i + 1;
         }
         int shift = 0;
         for (int i : r.remove) if (i < at) shift++;

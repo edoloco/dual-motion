@@ -126,6 +126,17 @@ a los rellenos se les resta el trazo y las líneas se cortan donde pasa; modos `
 rellenos, Solo líneas, Grifo = figura entera; orden `replace {l,f,rep:[{i,ss}]}`, un solo deshacer; no borra
 símbolos), Bote de tinta, Cuentagotas, Borrador (borra formas enteras), Mano.
 
+## Imágenes
+
+- Se eligen SIEMPRE en el principal (botón 🖼 de la barra de abajo o ☰ › Importar imagen; en el extendido solo
+  avisa). `Images.importUri`: se achica a 2048 px de lado como máximo, se guarda como PNG (si tiene transparencia) o
+  JPEG en `files/imagenes/id.ext`, viaja al extendido en trozos (`moImg`, `moImgReq` para pedir una que falta) antes
+  de las órdenes `imgAdd {id,name,ext,w,h}` y `add` con la forma imagen.
+- En el documento: biblioteca `MDoc.images` y objeto `Shape.img` (rectángulo n[0],n[1] – n[2],n[3]). Se mueve con
+  Selección, se escala o gira con Transformación libre, se interpola, puede ir dentro de un símbolo y se guarda en
+  el `.dmo` (`imagenes/`). Como en Flash, las herramientas de pintar no la tocan (`Shape.isObj()`: símbolos e
+  imágenes): cubo, borrador, bote de tinta, cuentagotas y subselección la ignoran.
+
 ## Símbolos gráficos
 
 - `MDoc.Symbol {id, name, layers}`: un dibujo con su propia línea de tiempo. En la escena se pone como

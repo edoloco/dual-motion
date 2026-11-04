@@ -44,10 +44,12 @@ final class Export {
         final MDoc d = new MDoc();
         d.load(json);
         final Sounds.Plan plan = Sounds.plan(c, d, false); // solo lo ya cargado; abajo se completa
+        Images.init(c);
         new Thread(() -> {
             File tmp = new File(c.getCacheDir(), "exportar.mp4");
             try {
                 Sounds.Plan p = d.hasAudio() ? Sounds.plan(c, d, true) : plan;
+                for (MDoc.Image im : d.images) Images.getNow(d, im.id); // las imágenes, listas antes de dibujar
                 encode(d, p, tmp, l);
                 if (cancel) throw new Exception("Cancelado");
                 Uri u = publish(c, tmp, name);

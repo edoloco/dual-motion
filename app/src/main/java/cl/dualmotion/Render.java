@@ -80,6 +80,7 @@ public final class Render {
 
     public static RectF bounds(MDoc.Shape s) {
         if (s.isInst()) { RectF r = new RectF(); instBounds(s, TOOLS.get().elapsed, r); return r; }
+        if (s.isImg()) return imgRect(s, new RectF());
         if (s.bounds != null) return s.bounds;
         RectF r = new RectF();
         path(s).computeBounds(r, true);
@@ -95,6 +96,7 @@ public final class Render {
      */
     public static void shape(Canvas c, MDoc.Shape s, int tint, int outline, float hair) {
         if (s.isInst()) { instance(c, s, tint, outline, hair); return; }
+        if (s.isImg()) { image(c, s, tint, outline, hair); return; }
         Path p = path(s);
         Tools t = TOOLS.get();
         Paint fillP = t.fill, strokeP = t.stroke;
@@ -149,6 +151,39 @@ public final class Render {
         key(c, p.key, tint, outline, hair / sc);
         t.elapsed = was;
         c.restoreToCount(save);
+    }
+
+    // ---------------------------------------------------------------- imágenes
+    /** Rectángulo de una imagen (n[0],n[1] – n[2],n[3], en cualquier orden). */
+    public static RectF imgRect(MDoc.Shape s, RectF out) {
+        out.set(Math.min(s.n[0], s.n[2]), Math.min(s.n[1], s.n[3]), Math.max(s.n[0], s.n[2]), Math.max(s.n[1], s.n[3]));
+        return out;
+    }
+
+    private static final Paint imgP = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
+
+    private static void image(Canvas c, MDoc.Shape s, int tint, int outline, float hair) {
+        Tools t = TOOLS.get();
+        RectF r = imgRect(s, new RectF());
+        if (outline != 0) { // modo contorno: solo el marco
+            t.stroke.setColor(outline);
+            t.stroke.setStrokeWidth(hair);
+            c.drawRect(r, t.stroke);
+            return;
+        }
+        android.graphics.Bitmap b = Images.get(t.doc, s.img);
+        if (b == null) { // todavía cargando o llegando: un marco gris
+            t.fill.setColor(tint != 0 ? withAlpha(tint, 0x22) : 0x22000000);
+            c.drawRect(r, t.fill);
+            t.stroke.setColor(tint != 0 ? tint : 0x55000000);
+            t.stroke.setStrokeWidth(hair);
+            c.drawRect(r, t.stroke);
+            return;
+        }
+        synchronized (imgP) {
+            imgP.setAlpha(tint != 0 ? 0x55 : 0xFF);
+            c.drawBitmap(b, null, r, imgP);
+        }
     }
 
     // ---------------------------------------------------------------- símbolos gráficos
@@ -283,7 +318,7 @@ public final class Render {
         RectF b = new RectF(bounds(s));
         b.inset(-tol, -tol);
         if (!b.contains(x, y)) return false;
-        if (s.isInst()) return (mode & (HIT_FILL | HIT_STROKE)) != 0; // una instancia se toma por su rectángulo
+        if (s.isObj()) return (mode & (HIT_FILL | HIT_STROKE)) != 0; // un símbolo o una imagen se toma por su rectángulo
         Path p = path(s);
         Region clip = new Region((int) Math.floor(b.left) - 2, (int) Math.floor(b.top) - 2,
                 (int) Math.ceil(b.right) + 2, (int) Math.ceil(b.bottom) + 2);

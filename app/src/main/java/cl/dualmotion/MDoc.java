@@ -38,6 +38,11 @@ public final class MDoc {
         public int first, loop;
         /** Relleno con huecos: índices de nodo donde empieza cada contorno extra (null = un solo contorno). */
         public int[] sub;
+        /** Imagen (id de MDoc.Image): se dibuja en el rectángulo n[0],n[1] – n[2],n[3]. */
+        public String img;
+        public boolean isImg() { return img != null; }
+        /** Objeto (símbolo o imagen): las herramientas de pintar no lo tocan desde afuera, como en Flash. */
+        public boolean isObj() { return sym != null || img != null; }
         transient Path path;
         transient RectF bounds;
 
@@ -51,6 +56,7 @@ public final class MDoc {
             s.stroke = stroke; s.fill = fill; s.width = width;
             s.sym = sym; s.first = first; s.loop = loop;
             s.sub = sub == null ? null : sub.clone();
+            s.img = img;
             return s;
         }
 
@@ -71,6 +77,7 @@ public final class MDoc {
             o.put("w", Math.round(width * 100) / 100.0);
             if (sym != null) { o.put("y", sym); if (first != 0) o.put("ff", first); if (loop != 0) o.put("lp", loop); }
             if (sub != null && sub.length > 0) { JSONArray b = new JSONArray(); for (int v : sub) b.put(v); o.put("sub", b); }
+            if (img != null) o.put("im", img);
             return o;
         }
 
@@ -86,6 +93,7 @@ public final class MDoc {
             s.fill = o.optInt("f", 0);
             s.width = (float) o.optDouble("w", 2);
             if (o.has("y")) { s.sym = o.optString("y"); s.first = Math.max(0, o.optInt("ff")); s.loop = clamp(o.optInt("lp"), 0, 2); }
+            if (o.has("im")) s.img = o.optString("im");
             JSONArray b = o.optJSONArray("sub");
             if (b != null && b.length() > 0) {
                 int cnt = s.count(), k = 0;
@@ -94,6 +102,24 @@ public final class MDoc {
                 if (k > 0) s.sub = java.util.Arrays.copyOf(v, k);
             }
             return s;
+        }
+    }
+
+    // ---------------------------------------------------------------- imagen
+    /** Imagen de la biblioteca: el archivo vive en cada teléfono (Images), el documento solo la nombra. */
+    public static final class Image {
+        public String id, name, ext;
+        public int w, h; // píxeles
+        JSONObject toJson() throws JSONException {
+            JSONObject o = new JSONObject();
+            o.put("id", id); o.put("name", name); o.put("ext", ext); o.put("w", w); o.put("h", h);
+            return o;
+        }
+        static Image from(JSONObject o) {
+            Image m = new Image();
+            m.id = o.optString("id"); m.name = o.optString("name", "Imagen"); m.ext = o.optString("ext", "png");
+            m.w = Math.max(1, o.optInt("w", 1)); m.h = Math.max(1, o.optInt("h", 1));
+            return m;
         }
     }
 
@@ -263,6 +289,7 @@ public final class MDoc {
 
     private static Shape lerpShape(Shape a, Shape b, float e) {
         if (a.isInst() != b.isInst()) return a;
+        if (!java.util.Objects.equals(a.img, b.img)) return a;
         if (a.isInst() && !a.sym.equals(b.sym)) return a;
         if (a.n.length != b.n.length || a.closed != b.closed || !java.util.Arrays.equals(a.sub, b.sub)) return a;
         boolean same = a.width == b.width && a.stroke == b.stroke && a.fill == b.fill && java.util.Arrays.equals(a.n, b.n);
@@ -448,6 +475,14 @@ public final class MDoc {
     /** Biblioteca de símbolos gráficos. */
     public final ArrayList<Symbol> symbols = new ArrayList<>();
     public int symSeq = 1;
+    /** Biblioteca de imágenes (mapas de bits importados). */
+    public final ArrayList<Image> images = new ArrayList<>();
+
+    public Image image(String id) {
+        if (id == null) return null;
+        for (Image m : images) if (m.id.equals(id)) return m;
+        return null;
+    }
 
     public MDoc() { reset(); }
 
@@ -457,6 +492,7 @@ public final class MDoc {
         sounds.clear();
         symbols.clear();
         symSeq = 1;
+        images.clear();
         layers.add(newLayer());
         undo.clear(); redo.clear();
     }
@@ -545,6 +581,11 @@ public final class MDoc {
                 o.put("symbols", ys);
                 o.put("symSeq", symSeq);
             }
+            if (!images.isEmpty()) {
+                JSONArray is = new JSONArray();
+                for (Image m : images) is.put(m.toJson());
+                o.put("images", is);
+            }
         } catch (JSONException ignored) { }
         return o;
     }
@@ -580,6 +621,12 @@ public final class MDoc {
         if (ys != null) for (int i = 0; i < ys.length(); i++) {
             JSONObject yo = ys.optJSONObject(i);
             if (yo != null) symbols.add(Symbol.from(yo));
+        }
+        images.clear();
+        JSONArray is = o.optJSONArray("images");
+        if (is != null) for (int i = 0; i < is.length(); i++) {
+            JSONObject io = is.optJSONObject(i);
+            if (io != null) images.add(Image.from(io));
         }
     }
 
@@ -675,6 +722,16 @@ public final class MDoc {
                 Layer nl = newLayer(audio);
                 if (S != null) nl.name = "Capa " + (T.size() + 1);
                 T.add(clamp(m.optInt("at", 0), 0, T.size()), nl);
+                return true;
+            }
+            case "imgAdd": { // agrega una imagen a la biblioteca (el archivo ya llegó a los dos teléfonos)
+                String id = m.optString("id");
+                if (id.isEmpty() || image(id) != null) return false;
+                push(-1);
+                Image im = new Image();
+                im.id = id; im.name = m.optString("name", "Imagen"); im.ext = m.optString("ext", "png");
+                im.w = Math.max(1, m.optInt("w", 1)); im.h = Math.max(1, m.optInt("h", 1));
+                images.add(im);
                 return true;
             }
             case "sndAdd": { // agrega un sonido a la biblioteca (el archivo ya llegó a los dos teléfonos)

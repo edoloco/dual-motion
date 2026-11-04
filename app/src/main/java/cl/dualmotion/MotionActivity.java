@@ -116,6 +116,9 @@ public final class MotionActivity extends Activity
         if (!isSolo()) { LinkService.start(this, role); LinkService.attach(this); }
         Sounds.onChange = () -> { if (tl != null) tl.invalidate(); };
         Sounds.warm(this, doc);
+        Images.init(this);
+        Images.onChange = () -> { if (stage != null) stage.invalidate(); if (mini != null) mini.invalidate();
+            if (previewView != null) previewView.invalidate(); };
         askPermissions();
         if (!isEdit()) Updater.checkQuiet(this);
         refreshAll();
@@ -503,6 +506,7 @@ public final class MotionActivity extends Activity
         wide(addBtn(c, "F5 －", "Quitar fotograma (Mayús+F5)", () -> frameOp("delFrame", false)));
         addBtn(c, "↝", "Crear / quitar interpolación de movimiento", this::toggleTween);
         addBtn(c, "✂", "Cortar el sonido en el cabezal", this::cutClip);
+        addBtn(c, "🖼", "Importar imagen", this::addImage);
         return c;
     }
 
@@ -1017,6 +1021,7 @@ public final class MotionActivity extends Activity
 
     private void docChanged() {
         if (!doc.sounds.isEmpty()) { Sounds.need(this, doc); Sounds.warm(this, doc); }
+        if (!doc.images.isEmpty()) Images.need(this, doc);
         clampState();
         refreshAll();
     }
@@ -1124,6 +1129,7 @@ public final class MotionActivity extends Activity
                 stateChanged(null);
                 Sounds.need(this, doc);
                 Sounds.warm(this, doc);
+                Images.need(this, doc);
                 break;
             }
             case "moVis":
@@ -1206,6 +1212,11 @@ public final class MotionActivity extends Activity
                 JSONObject so = ss.optJSONObject(i);
                 if (so != null) Sounds.sendFile(this, so.optString("id"), so.optString("ext"));
             }
+            org.json.JSONArray is = d.optJSONArray("images");
+            for (int i = 0; is != null && i < is.length(); i++) {
+                JSONObject io = is.optJSONObject(i);
+                if (io != null) Images.sendFile(this, io.optString("id"), io.optString("ext"));
+            }
         }
         request(op("load", "doc", d));
     }
@@ -1233,6 +1244,41 @@ public final class MotionActivity extends Activity
             c.len = Math.max(1, snd.dur);
             try { request(op("clipAdd", "l", l, "c", c.toJson())); } catch (JSONException ignored) { }
             Ui.toast(this, "Sonido agregado: " + snd.name);
+        });
+    }
+
+    // ================================================================ imagen (siempre se elige en el principal)
+    private void addImage() {
+        if (isEdit()) { Ui.toast(this, "La imagen se importa desde el principal (☰ › Importar imagen)"); return; }
+        if (isView() && !connected) { Ui.toast(this, "Sin conexión con el extendido"); return; }
+        MDoc.Layer L = lay(st.layer);
+        if (L == null || L.audio) { Ui.toast(this, "Elige una capa de dibujo"); return; }
+        if (L.lock || !L.vis) { Ui.toast(this, "La capa está bloqueada u oculta"); return; }
+        Files.pickImage(this);
+    }
+
+    /** Llegó la imagen elegida: va al extendido y queda centrada en la mesa, en la capa y el fotograma actuales. */
+    void importImage(Uri u) {
+        Ui.toast(this, "Cargando la imagen…");
+        Images.importUri(this, u, (im, err) -> {
+            if (im == null) { Ui.toast(this, "No se pudo cargar la imagen: " + err); return; }
+            if (isView()) Images.sendFile(this, im.id, im.ext); // el archivo viaja antes que las órdenes
+            request(op("imgAdd", "id", im.id, "name", im.name, "ext", im.ext, "w", im.w, "h", im.h));
+            // tamaño: el de la imagen, achicado para caber en el 80 % del escenario
+            float k = Math.min(1f, Math.min(doc.w * 0.8f / im.w, doc.h * 0.8f / im.h));
+            float w = im.w * k, h = im.h * k;
+            float cx = doc.w / 2f, cy = doc.h / 2f;
+            if (st.inSymbol()) { cx = 0; cy = 0; } // dentro de un símbolo: en su punto de registro
+            MDoc.Layer L = lay(st.layer);
+            MDoc.Pose p = L == null ? null : MDoc.pose(L, st.frame);
+            if (p != null && !st.inSymbol()) { cx -= p.tx; cy -= p.ty; }
+            MDoc.Shape s = new MDoc.Shape();
+            s.img = im.id;
+            s.n = new float[]{cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2, cx - w / 2, cy - h / 2};
+            s.stroke = 0;
+            s.width = 0;
+            try { request(op("add", "l", st.layer, "f", st.frame, "s", s.toJson())); } catch (JSONException ignored) { }
+            Ui.toast(this, "Imagen agregada: muévela con Selección o Transformación libre");
         });
     }
 
@@ -1539,7 +1585,8 @@ public final class MotionActivity extends Activity
     @Override public void menu() {
         String[] items = {"Guardar", "Guardar como…", "Abrir…", "Nuevo documento", "Conexión",
                 "Cambiar el papel de este teléfono", "Buscar actualización", "Permisos para la mesa",
-                "Exportar video (MP4)", "Agregar sonido…", "Cerrar DUAL Motion", "Acerca de DUAL Motion"};
+                "Exportar video (MP4)", "Agregar sonido…", "Cerrar DUAL Motion", "Acerca de DUAL Motion",
+                "Importar imagen…"};
         new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
                 .setItems(items, (d, w) -> {
                     switch (w) {
@@ -1568,6 +1615,7 @@ public final class MotionActivity extends Activity
                         case 9: addSound(); break;
                         case 10: askQuit(); break;
                         case 11: about(); break;
+                        case 12: addImage(); break;
                     }
                 }).show();
     }

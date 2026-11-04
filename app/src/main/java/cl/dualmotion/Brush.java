@@ -137,7 +137,7 @@ final class Brush {
             float[] p0 = pts.get(0);
             for (int i = k.shapes.size() - 1; i >= 0; i--) {
                 MDoc.Shape s = k.shapes.get(i);
-                if (!s.isInst() && s.closed && s.fill != 0 && Render.hit(s, p0[0], p0[1], 0, Render.HIT_INSIDE)) { inside = i; break; }
+                if (!s.isObj() && s.closed && s.fill != 0 && Render.hit(s, p0[0], p0[1], 0, Render.HIT_INSIDE)) { inside = i; break; }
             }
             if (inside < 0) { r.error = "Pintar dentro: empieza el trazo dentro de un relleno"; return r; }
             boolean[] f = fillMask(g, k.shapes.get(inside));
@@ -152,7 +152,7 @@ final class Brush {
                 r.at = k.shapes.size();
                 for (int i = 0; i < k.shapes.size(); i++) {
                     MDoc.Shape s = k.shapes.get(i);
-                    if (!s.isInst() && s.stroke != 0 && s.width > 0 && RectF.intersects(Render.bounds(s), area)) { r.at = i; break; }
+                    if (!s.isObj() && s.stroke != 0 && s.width > 0 && RectF.intersects(Render.bounds(s), area)) { r.at = i; break; }
                 }
                 break;
             }
@@ -177,7 +177,7 @@ final class Brush {
         eb.inset(-rad - 1, -rad - 1);
         for (int i = 0; i < k.shapes.size(); i++) {
             MDoc.Shape s = k.shapes.get(i);
-            if (s.isInst() || s.count() == 0) continue;
+            if (s.isObj() || s.count() == 0) continue;
             RectF sb = Render.bounds(s);
             if (!RectF.intersects(sb, eb)) continue;
             ArrayList<MDoc.Shape> out = new ArrayList<>();

@@ -177,7 +177,7 @@ public final class StageView extends View {
         ArrayList<MDoc.Shape> ss = new ArrayList<>();
         for (int i : sel) {
             MDoc.Shape sh = k.shapes.get(i).copy();
-            if (sh.isInst()) continue; // los colores de un símbolo se cambian dentro de él
+            if (sh.isObj()) continue; // los colores de un símbolo se cambian dentro de él; una imagen no tiene
             if ("s".equals(which)) { if (sh.brush) sh.stroke = st.fill != 0 ? st.fill : st.stroke; else sh.stroke = st.stroke; }
             else if ("f".equals(which)) { if (sh.brush) sh.stroke = st.fill != 0 ? st.fill : sh.stroke; else sh.fill = st.fill; }
             else if ("w".equals(which)) { sh.width = sh.brush ? st.width * 3 + 2 : st.width; }
@@ -444,7 +444,7 @@ public final class StageView extends View {
             }
             p.setPathEffect(null);
             if (st.tool == State.SUB) for (int i : sel) {
-                if (i >= k.shapes.size() || k.shapes.get(i).isInst()) continue;
+                if (i >= k.shapes.size() || k.shapes.get(i).isObj()) continue;
                 drawNodes(c, i == subIdx && subCopy != null ? subCopy : k.shapes.get(i), hair, -1);
             }
         }
@@ -856,6 +856,7 @@ public final class StageView extends View {
                 if (st.fill == 0) { Ui.toast(getContext(), "Elige un color de relleno"); return; }
                 // un símbolo no se pinta desde afuera: se edita por dentro (como en Flash)
                 int top = Render.hitKey(k, x, y, 0, Render.HIT_FILL | Render.HIT_STROKE | Render.HIT_INSIDE);
+                if (top >= 0 && k.shapes.get(top).isImg()) { Ui.toast(getContext(), "Es una imagen: el cubo no la pinta"); return; }
                 if (top >= 0 && k.shapes.get(top).isInst()) {
                     Ui.toast(getContext(), "Es un símbolo: tócalo dos veces con Selección para pintarlo por dentro");
                     return;
@@ -901,7 +902,7 @@ public final class StageView extends View {
                 int i = Render.hitKey(k, x, y, tol(), Render.HIT_STROKE | Render.HIT_FILL);
                 if (i < 0) return;
                 MDoc.Shape sh = k.shapes.get(i).copy();
-                if (sh.isInst()) return;
+                if (sh.isObj()) return;
                 if (st.stroke == 0 && !sh.closed) { Ui.toast(getContext(), "Una línea abierta necesita color de trazo"); return; }
                 sh.stroke = st.stroke;
                 if (!sh.brush) sh.width = st.width;
@@ -914,7 +915,7 @@ public final class StageView extends View {
                 int i = Render.hitKey(k, x, y, tol(), Render.HIT_STROKE | Render.HIT_FILL);
                 if (i < 0) return;
                 MDoc.Shape sh = k.shapes.get(i);
-                if (sh.isInst()) return;
+                if (sh.isObj()) return;
                 if (sh.brush) host.picked(st.stroke, sh.stroke, Math.max(1, (sh.width - 2) / 3));
                 else host.picked(sh.stroke, sh.closed ? sh.fill : st.fill, sh.width);
             }
@@ -935,8 +936,8 @@ public final class StageView extends View {
         for (int i = 0; i < k.shapes.size(); i++) {
             MDoc.Shape sh = k.shapes.get(i);
             if (erasing.contains(i) || !Render.hit(sh, x, y, 8 * dp / s, Render.HIT_FILL | Render.HIT_STROKE)) continue;
-            if (sh.isInst()) { // el borrador no borra símbolos (como en Flash)
-                if (!instWarned) Ui.toast(getContext(), "El borrador no borra símbolos: elígelo con Selección y toca ✕, o edítalo por dentro");
+            if (sh.isObj()) { // el borrador no borra símbolos ni imágenes (como en Flash)
+                if (!instWarned) Ui.toast(getContext(), "El borrador no borra símbolos ni imágenes: elígelos con Selección y toca ✕");
                 instWarned = true;
                 continue;
             }
@@ -1061,7 +1062,7 @@ public final class StageView extends View {
         for (int si : sel) {
             if (si >= k.shapes.size()) continue;
             MDoc.Shape sh = k.shapes.get(si);
-            if (sh.isInst()) continue;
+            if (sh.isObj()) continue;
             for (int i = 0; i < sh.count(); i++) {
                 float nx = sh.n[i * 6], ny = sh.n[i * 6 + 1];
                 for (int part = 1; part <= 2; part++) { // primero las manillas (si están separadas del nodo)

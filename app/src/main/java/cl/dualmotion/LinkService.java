@@ -118,6 +118,8 @@ public final class LinkService extends Service implements Net.Listener {
             case "moSnd": Sounds.onChunk(this, m); return;
             case "moQuit": if (client == null) { stopSelf(); return; } break; // sin pantalla abierta: solo se apaga
             case "moSndReq": Sounds.onRequest(this, m); return;
+            case "moImg": Images.onChunk(this, m); return;
+            case "moImgReq": Images.onRequest(this, m); return;
         }
         Net.Listener l = client;
         if (l != null) l.onMessage(m);
