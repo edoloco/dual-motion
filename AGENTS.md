@@ -53,6 +53,9 @@ Las dos pantallas son UNA: lo repartido se comporta como un solo elemento.
   con la pantalla en segundo plano. Atiende él mismo `moShow` (extendido: trae la mesa al frente), `moUpdate`,
   `moSnd`/`moSndReq`; lo demás va a la pantalla abierta (`attach`). `startOrNotify`: abre una pantalla desde
   segundo plano si hay permiso "mostrar sobre otras apps" (se pide en el extendido); si no, deja un aviso.
+- Abrir desde segundo plano (Android 15): `LinkService.startOrNotify` pone antes una ventanita de 1 px (`blip`), porque
+  el permiso "mostrar sobre otras apps" ya no basta sin una ventana visible. Además el manifiesto declara la meta-data
+  `chronos.dual`: ChronOS (desde la versión de nov. 2026) abre DUAL Motion en el extendido cuando se abre en el principal.
 - `Updater` — como en ChronOS: Releases de `edoloco/dual-motion`, descarga `DualMotion.apk`, `PackageInstaller`.
   "Actualizar los dos" manda `moUpdate`; el otro descarga e instala solo y responde con `moMsg`.
 - `Sounds` — sonidos: original en `files/sonidos/id.ext`, PCM 16 bits estéreo 44,1 kHz en caché (`id.pcm`),

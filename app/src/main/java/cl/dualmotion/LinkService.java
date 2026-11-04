@@ -183,8 +183,43 @@ public final class LinkService extends Service implements Net.Listener {
      * Abre una pantalla desde segundo plano. Android solo lo permite si la app puede "mostrarse sobre otras apps"
      * o está a la vista; si no, deja un aviso para tocar.
      */
+    private static android.view.View blipView;
+    private static final android.os.Handler ui = new android.os.Handler(android.os.Looper.getMainLooper());
+
+    /**
+     * Android 15: "mostrar sobre otras apps" solo deja abrir una pantalla desde segundo plano si la app tiene una
+     * ventana visible en ese momento. Se pone una de 1 px un par de segundos (no se nota).
+     */
+    private static void blip(Context c) {
+        try {
+            android.view.WindowManager wm = (android.view.WindowManager) c.getApplicationContext().getSystemService(Context.WINDOW_SERVICE);
+            if (blipView == null) {
+                blipView = new android.view.View(c.getApplicationContext());
+                blipView.setBackgroundColor(0x01000000);
+                android.view.WindowManager.LayoutParams lp = new android.view.WindowManager.LayoutParams(1, 1,
+                        android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                        android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                        android.graphics.PixelFormat.TRANSLUCENT);
+                lp.gravity = android.view.Gravity.TOP | android.view.Gravity.START;
+                wm.addView(blipView, lp);
+            }
+            ui.removeCallbacksAndMessages(wm);
+            ui.postAtTime(() -> {
+                try { if (blipView != null) wm.removeView(blipView); } catch (Exception ignored) { }
+                blipView = null;
+            }, wm, android.os.SystemClock.uptimeMillis() + 3000);
+        } catch (Exception ignored) { blipView = null; }
+    }
+
     static void startOrNotify(Context c, Intent i, int code, String title, String text) {
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (!MotionActivity.visible && Settings.canDrawOverlays(c)) {
+            ui.post(() -> {
+                blip(c);
+                ui.postDelayed(() -> { try { c.startActivity(i); } catch (Exception ignored) { } }, 150);
+            });
+            return;
+        }
         if (MotionActivity.visible || Settings.canDrawOverlays(c)) {
             try { c.startActivity(i); return; } catch (Exception ignored) { }
         }

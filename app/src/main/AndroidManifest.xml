@@ -26,6 +26,8 @@
         android:allowBackup="true"
         android:hardwareAccelerated="true"
         android:theme="@style/Tema">
+        <!-- ChronOS la reconoce como app de dos pantallas: al abrirla en el principal, abre también el extendido -->
+        <meta-data android:name="chronos.dual" android:value="true" />
 
         <activity
             android:name=".MotionActivity"
