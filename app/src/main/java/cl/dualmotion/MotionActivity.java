@@ -636,7 +636,10 @@ public final class MotionActivity extends Activity
         colors.addView(swap, lpMargins(dp(40), dp(40), dp(8), 0, 0, 0));
         col.addView(colors);
 
-        col.addView(new Palette(this), lpMargins(-1, dp(56), 0, dp(8), 0, 0));
+        palette = new Palette(this);
+        col.addView(palette, lpMargins(-1, dp(84), 0, dp(8), 0, 0));
+        TextView palHint = Ui.label(this, "Mantén presionado un color para editarlo · fila de abajo: Mis colores", 10, 0xFF888888);
+        col.addView(palHint);
         col.addView(buildBucketBox());
         brushBox = modeBox("Modo del pincel", Brush.BRUSH_MODES, true);
         col.addView(brushBox);
@@ -1680,18 +1683,123 @@ public final class MotionActivity extends Activity
     }
 
     private void pickColor(final boolean fill) {
-        final AlertDialog[] dlg = new AlertDialog[1];
-        ColorGrid g = new ColorGrid(this, c -> { setColor(fill, c); if (dlg[0] != null) dlg[0].dismiss(); });
-        FrameLayout box = new FrameLayout(this);
-        box.setPadding(dp(12), dp(8), dp(12), 0);
-        box.addView(g, new FrameLayout.LayoutParams(dp(18 * 18), dp(18 * 13)));
-        dlg[0] = new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
-                .setTitle(fill ? "Color del relleno" : "Color del trazo")
-                .setView(box)
-                .setNeutralButton("Sin color", (d, w) -> setColor(fill, 0))
-                .setNegativeButton("Cancelar", null)
-                .show();
+        openMixer(fill ? st.fill : st.stroke, fill ? "Color del relleno" : "Color del trazo", c -> setColor(fill, c),
+                () -> setColor(fill, 0));
     }
+
+    /**
+     * Mezclador de colores (como en Flash): cuadro y barras de tono y transparencia, código hexadecimal, muestras
+     * clásicas y "guardar en mis colores". onNone != null agrega el botón "Sin color".
+     */
+    private void openMixer(int start, String title, final java.util.function.IntConsumer onOk, final Runnable onNone) {
+        final ColorMixer mx = new ColorMixer(this, start);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(16), dp(8), dp(16), 0);
+        box.addView(mx, new LinearLayout.LayoutParams(dp(330), dp(150)));
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(8), 0, 0);
+        row.addView(Ui.label(this, "#", 16, Ui.INK));
+        final EditText hex = new EditText(this);
+        hex.setSingleLine(true);
+        hex.setTextSize(15);
+        hex.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        hex.setText(hexOf(mx.color()));
+        row.addView(hex, new LinearLayout.LayoutParams(dp(110), -2));
+        final boolean[] typing = {false};
+        mx.onChange = c -> { if (!typing[0]) hex.setText(hexOf(c)); };
+        hex.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(android.text.Editable s) {
+                Integer c = parseHex(s.toString());
+                if (c == null || !hex.hasFocus()) return;
+                typing[0] = true;
+                mx.set(c);
+                typing[0] = false;
+            }
+        });
+        TextView save = Ui.sym(this, "＋ Mis colores", "Guardar este color en Mis colores", () -> {
+            saveMyColor(mx.color());
+            Ui.toast(this, "Guardado en Mis colores");
+        });
+        save.setTextSize(12);
+        row.addView(save, lpMargins(0, dp(36), dp(8), 0, 0, 0));
+        ((LinearLayout.LayoutParams) save.getLayoutParams()).weight = 1;
+        box.addView(row);
+        final AlertDialog[] dlg = new AlertDialog[1];
+        TextView classic = Ui.sym(this, "Muestras clásicas…", "Los 216 colores de siempre", () -> {
+            ColorGrid g = new ColorGrid(this, c -> { mx.set(c); hex.setText(hexOf(c)); });
+            FrameLayout gb = new FrameLayout(this);
+            gb.setPadding(dp(12), dp(8), dp(12), 0);
+            gb.addView(g, new FrameLayout.LayoutParams(dp(18 * 18), dp(18 * 13)));
+            new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                    .setTitle("Muestras").setView(gb).setPositiveButton("Listo", null).show();
+        });
+        classic.setTextSize(12);
+        box.addView(classic, lpMargins(-1, dp(36), 0, dp(6), 0, 0));
+        AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setTitle(title).setView(scrollable(box))
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Listo", (d, w) -> onOk.accept(mx.color()));
+        if (onNone != null) b.setNeutralButton("Sin color", (d, w) -> onNone.run());
+        dlg[0] = b.show();
+    }
+
+    /** Con el teléfono acostado hay poca altura: el contenido del diálogo se puede deslizar. */
+    private View scrollable(View v) {
+        ScrollView sv = new ScrollView(this);
+        sv.addView(v);
+        return sv;
+    }
+
+    private static String hexOf(int c) {
+        return (c >>> 24) == 0xFF ? String.format(Locale.US, "%06X", c & 0xFFFFFF) : String.format(Locale.US, "%08X", c);
+    }
+
+    /** "F57C1F" o "80F57C1F" (con transparencia); null si no es un color. */
+    private static Integer parseHex(String s) {
+        s = s.trim().replace("#", "");
+        if (!s.matches("[0-9a-fA-F]{6}|[0-9a-fA-F]{8}")) return null;
+        long v = Long.parseLong(s, 16);
+        return s.length() == 6 ? (int) (0xFF000000L | v) : (int) v;
+    }
+
+    // ---- paleta del panel: 14 colores editables y una fila de "Mis colores" (se guarda en el teléfono)
+    static final int EMPTY = 1; // casilla vacía de Mis colores
+    static final int[] DEFAULT_COLS = {0, 0xFF000000, 0xFF666666, 0xFFFFFFFF, 0xFFE53935, 0xFFF57C1F, 0xFFFDD835,
+            0xFF2FA866, 0xFF00897B, 0xFF2F7BE0, 0xFF3949AB, 0xFF8E44AD, 0xFFEC407A, 0xFF795548,
+            EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY};
+
+    private int[] paletteCols() {
+        int[] c = DEFAULT_COLS.clone();
+        String s = prefs.getString("palette", "");
+        if (!s.isEmpty()) {
+            String[] p = s.split(",");
+            for (int i = 0; i < p.length && i < c.length; i++) try { c[i] = (int) Long.parseLong(p[i]); } catch (Exception ignored) { }
+        }
+        return c;
+    }
+
+    private void savePalette(int[] c) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < c.length; i++) { if (i > 0) b.append(','); b.append(c[i]); }
+        prefs.edit().putString("palette", b.toString()).apply();
+        if (palette != null) palette.invalidate();
+    }
+
+    /** Agrega a Mis colores (la primera casilla vacía; si no hay, se corre la fila y se pierde la más antigua). */
+    private void saveMyColor(int color) {
+        int[] c = paletteCols();
+        int at = -1;
+        for (int i = 14; i < c.length; i++) if (c[i] == EMPTY) { at = i; break; }
+        if (at < 0) { System.arraycopy(c, 15, c, 14, c.length - 15); at = c.length - 1; }
+        c[at] = color;
+        savePalette(c);
+    }
+
+    private Palette palette;
 
     // ================================================================ refrescar la interfaz
     private void refreshAll() {
@@ -1870,32 +1978,91 @@ public final class MotionActivity extends Activity
     }
 
     /** Colores rápidos: se aplican al trazo o al relleno, según cuál esté activo. */
+    /** Colores rápidos: tocar = usar; mantener = editar (o quitar de Mis colores); casilla "+" = color nuevo. */
     final class Palette extends View {
-        final int[] cols = {0, 0xFF000000, 0xFF666666, 0xFFFFFFFF, 0xFFE53935, 0xFFF57C1F, 0xFFFDD835,
-                0xFF2FA866, 0xFF00897B, 0xFF2F7BE0, 0xFF3949AB, 0xFF8E44AD, 0xFFEC407A, 0xFF795548};
         final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
         final RectF r = new RectF();
+        int downI = -1;
+        boolean longDone;
+        final Runnable longPress = () -> { longDone = true; performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS); cellMenu(downI); };
 
         Palette(Context c) { super(c); }
 
         @Override protected void onDraw(Canvas c) {
-            float cw = getWidth() / 7f, ch = getHeight() / 2f;
+            int[] cols = paletteCols();
+            float cw = getWidth() / 7f, ch = getHeight() / 3f;
             for (int i = 0; i < cols.length; i++) {
                 r.set((i % 7) * cw + dp(2), (i / 7) * ch + dp(2), (i % 7 + 1) * cw - dp(2), (i / 7 + 1) * ch - dp(2));
+                if (cols[i] == EMPTY) { // casilla libre de Mis colores
+                    p.setStyle(Paint.Style.STROKE);
+                    p.setStrokeWidth(dp(1));
+                    p.setColor(0x55000000);
+                    p.setPathEffect(new android.graphics.DashPathEffect(new float[]{dp(3), dp(3)}, 0));
+                    c.drawRoundRect(r, dp(5), dp(5), p);
+                    p.setPathEffect(null);
+                    p.setStyle(Paint.Style.FILL);
+                    p.setTextSize(dp(14));
+                    p.setColor(0x88000000);
+                    c.drawText("+", r.centerX() - p.measureText("+") / 2, r.centerY() + dp(5), p);
+                    continue;
+                }
                 drawColorCell(c, r, cols[i], p, dp(5));
                 p.setStyle(Paint.Style.STROKE);
                 p.setStrokeWidth(dp(1));
                 p.setColor(0x33000000);
                 c.drawRoundRect(r, dp(5), dp(5), p);
             }
+            p.setStyle(Paint.Style.FILL);
+        }
+
+        private int cellAt(float x, float y) {
+            int i = (int) (y / (getHeight() / 3f)) * 7 + (int) (x / (getWidth() / 7f));
+            return i >= 0 && i < DEFAULT_COLS.length ? i : -1;
         }
 
         @Override public boolean onTouchEvent(MotionEvent e) {
-            if (e.getActionMasked() == MotionEvent.ACTION_UP) {
-                int i = (int) (e.getY() / (getHeight() / 2f)) * 7 + (int) (e.getX() / (getWidth() / 7f));
-                if (i >= 0 && i < cols.length) setColor(targetFill, cols[i]);
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    downI = cellAt(e.getX(), e.getY());
+                    longDone = false;
+                    postDelayed(longPress, 450);
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    removeCallbacks(longPress);
+                    if (!longDone && downI >= 0 && downI == cellAt(e.getX(), e.getY())) {
+                        int c = paletteCols()[downI];
+                        if (c == EMPTY) editCell(downI); else setColor(targetFill, c);
+                    }
+                    return true;
+                case MotionEvent.ACTION_CANCEL:
+                    removeCallbacks(longPress);
+                    return true;
             }
             return true;
+        }
+
+        private void cellMenu(final int i) {
+            if (i < 0) return;
+            final int[] cols = paletteCols();
+            if (cols[i] == EMPTY) { editCell(i); return; }
+            final boolean mine = i >= 14;
+            new AlertDialog.Builder(MotionActivity.this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                    .setItems(new String[]{"Editar este color", mine ? "Quitar de Mis colores" : "Volver al color original"}, (d, w) -> {
+                        if (w == 0) editCell(i);
+                        else { cols[i] = DEFAULT_COLS[i]; savePalette(cols); }
+                    }).show();
+        }
+
+        /** Abre el mezclador para esta casilla; al aceptar se guarda ahí y se usa. */
+        private void editCell(final int i) {
+            int[] cols = paletteCols();
+            int start = cols[i] == EMPTY ? (targetFill ? st.fill : st.stroke) : cols[i];
+            openMixer(start, i >= 14 ? "Mis colores" : "Editar color", c -> {
+                int[] cc = paletteCols();
+                cc[i] = c;
+                savePalette(cc);
+                setColor(targetFill, c);
+            }, null);
         }
     }
 

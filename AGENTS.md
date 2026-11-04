@@ -126,6 +126,14 @@ a los rellenos se les resta el trazo y las líneas se cortan donde pasa; modos `
 rellenos, Solo líneas, Grifo = figura entera; orden `replace {l,f,rep:[{i,ss}]}`, un solo deshacer; no borra
 símbolos), Bote de tinta, Cuentagotas, Borrador (borra formas enteras), Mano.
 
+## Colores
+
+- Tocar dos veces la muestra de trazo o relleno abre el **mezclador** (`ColorMixer`, como el de Flash): cuadro de
+  saturación/brillo, barras de tono y transparencia, color anterior/nuevo, código hexadecimal (RRGGBB o AARRGGBB),
+  "Muestras clásicas…" (los 216) y "＋ Mis colores".
+- Paleta del panel (`Palette`): 14 colores editables + una fila de 7 "Mis colores" (casillas "+" vacías). Tocar =
+  usar; mantener = editar / quitar / volver al original. Se guarda en el teléfono (pref `palette`).
+
 ## Imágenes
 
 - Se eligen SIEMPRE en el principal (botón 🖼 de la barra de abajo o ☰ › Importar imagen; en el extendido solo
