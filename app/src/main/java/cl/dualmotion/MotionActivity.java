@@ -196,8 +196,8 @@ public final class MotionActivity extends Activity
     private boolean isEdit() { return EDIT.equals(role); }
     private boolean isSolo() { return SOLO.equals(role); }
 
-    /** Un solo teléfono "mitad y mitad": en vertical, arriba lo del principal y abajo la mesa. */
-    private boolean half() { return isSolo() && "half".equals(prefs.getString("soloLayout", "stack")); }
+    /** Un solo teléfono: siempre parado, mitad y mitad (arriba lo del principal, abajo la mesa). */
+    private boolean half() { return isSolo(); }
 
     @Override protected void onResume() { super.onResume(); hideBars(); keepStage = false; }
 
@@ -297,8 +297,7 @@ public final class MotionActivity extends Activity
         row.setGravity(Gravity.CENTER);
         row.addView(roleCard("Principal", "Arriba: herramientas, línea de tiempo y vista previa", VIEW, true));
         row.addView(roleCard("Extendido", "Abajo: la mesa de trabajo para dibujar", EDIT, false));
-        row.addView(roleCard("Un solo teléfono", "Todo junto, acostado", SOLO, false));
-        row.addView(roleCard("Mitad y mitad", "Un teléfono parado: arriba herramientas, abajo la mesa", "half", false));
+        row.addView(roleCard("Un solo teléfono", "Parado: arriba herramientas, abajo la mesa", SOLO, false));
         box.addView(row);
         setContentView(box);
     }
@@ -316,13 +315,9 @@ public final class MotionActivity extends Activity
         b.setGravity(Gravity.CENTER);
         c.addView(a);
         c.addView(b);
-        c.setOnClickListener(v -> {
-            boolean h = "half".equals(r);
-            prefs.edit().putString("role", h ? SOLO : r).putString("soloLayout", h ? "half" : "stack").apply();
-            recreate();
-        });
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(178), dp(130));
-        lp.setMargins(dp(6), 0, dp(6), 0);
+        c.setOnClickListener(v -> { prefs.edit().putString("role", r).apply(); recreate(); });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(200), dp(130));
+        lp.setMargins(dp(8), 0, dp(8), 0);
         c.setLayoutParams(lp);
         return c;
     }
@@ -340,7 +335,7 @@ public final class MotionActivity extends Activity
     /** Principal y modo solo: herramientas | línea de tiempo (+ mesa en solo) | propiedades. */
     private void buildMain() {
         // la orientación va con el modo: "mitad y mitad" parado; lo demás, acostado
-        setRequestedOrientation(half() ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+        setRequestedOrientation(half() ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                 : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         if (half()) { buildHalf(); return; }
         root = new FrameLayout(this);

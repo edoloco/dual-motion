@@ -13,8 +13,7 @@ El nombre "Macromedia" o "Flash" **no aparece en la interfaz**: es la inspiraci�
 |---|---|---|
 | **Principal** (`view`, arriba) | Redmi 9S | Herramientas, **línea de tiempo**, propiedades. La **vista previa** de la animación se reproduce aquí **a pantalla completa**. |
 | **Extendido** (`edit`, abajo) | Poco M8 Pro | **La mesa de trabajo** (escenario): dibujar, seleccionar, mover, zoom con dos dedos. |
-| **Un solo teléfono** (`solo`) | cualquiera | Todo junto: herramientas, línea de tiempo y la mesa debajo. |
-| **Mitad y mitad** (`solo` + pref `soloLayout=half`) | cualquiera, **parado** | Arriba lo del principal en angosto (tira de herramientas, pestañas Línea de tiempo / Propiedades, reproducción, herramientas de fotograma); abajo la mesa. `buildHalf`. |
+| **Un solo teléfono** (`solo`) | cualquiera, **siempre parado** (mitad y mitad) | Arriba lo del principal en angosto (tira de herramientas, pestañas Línea de tiempo / Propiedades, reproducción, herramientas de fotograma); abajo la mesa. `buildHalf`. |
 
 Las dos pantallas son UNA: lo repartido se comporta como un solo elemento.
 
