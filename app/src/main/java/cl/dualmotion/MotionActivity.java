@@ -8,6 +8,7 @@ import android.content.SharedPreferences;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -103,7 +104,7 @@ public final class MotionActivity extends Activity
         getWindow().setAttributes(wlp);
         String r = getIntent().getStringExtra("role");
         if (r == null) r = prefs.getString("role", null);
-        if (r == null) { chooseRole(); return; }
+        if (r == null) { setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE); chooseRole(); return; }
         start(r);
     }
 
@@ -194,6 +195,9 @@ public final class MotionActivity extends Activity
     private boolean isView() { return VIEW.equals(role); }
     private boolean isEdit() { return EDIT.equals(role); }
     private boolean isSolo() { return SOLO.equals(role); }
+
+    /** Un solo teléfono "mitad y mitad": en vertical, arriba lo del principal y abajo la mesa. */
+    private boolean half() { return isSolo() && "half".equals(prefs.getString("soloLayout", "stack")); }
 
     @Override protected void onResume() { super.onResume(); hideBars(); keepStage = false; }
 
@@ -293,7 +297,8 @@ public final class MotionActivity extends Activity
         row.setGravity(Gravity.CENTER);
         row.addView(roleCard("Principal", "Arriba: herramientas, línea de tiempo y vista previa", VIEW, true));
         row.addView(roleCard("Extendido", "Abajo: la mesa de trabajo para dibujar", EDIT, false));
-        row.addView(roleCard("Un solo teléfono", "Todo junto en esta pantalla", SOLO, false));
+        row.addView(roleCard("Un solo teléfono", "Todo junto, acostado", SOLO, false));
+        row.addView(roleCard("Mitad y mitad", "Un teléfono parado: arriba herramientas, abajo la mesa", "half", false));
         box.addView(row);
         setContentView(box);
     }
@@ -311,9 +316,13 @@ public final class MotionActivity extends Activity
         b.setGravity(Gravity.CENTER);
         c.addView(a);
         c.addView(b);
-        c.setOnClickListener(v -> { prefs.edit().putString("role", r).apply(); recreate(); });
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(200), dp(130));
-        lp.setMargins(dp(8), 0, dp(8), 0);
+        c.setOnClickListener(v -> {
+            boolean h = "half".equals(r);
+            prefs.edit().putString("role", h ? SOLO : r).putString("soloLayout", h ? "half" : "stack").apply();
+            recreate();
+        });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(178), dp(130));
+        lp.setMargins(dp(6), 0, dp(6), 0);
         c.setLayoutParams(lp);
         return c;
     }
@@ -330,6 +339,10 @@ public final class MotionActivity extends Activity
 
     /** Principal y modo solo: herramientas | línea de tiempo (+ mesa en solo) | propiedades. */
     private void buildMain() {
+        // la orientación va con el modo: "mitad y mitad" parado; lo demás, acostado
+        setRequestedOrientation(half() ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        if (half()) { buildHalf(); return; }
         root = new FrameLayout(this);
         root.setBackgroundColor(Ui.WORK);
         LinearLayout row = new LinearLayout(this);
@@ -392,6 +405,121 @@ public final class MotionActivity extends Activity
 
         buildPreview();
         setContentView(root);
+    }
+
+    /**
+     * Mitad y mitad (un teléfono parado): la mitad de arriba es el principal en angosto (herramientas en una tira,
+     * pestañas Línea de tiempo / Propiedades, reproducción y herramientas de fotograma) y la de abajo, la mesa.
+     */
+    private void buildHalf() {
+        root = new FrameLayout(this);
+        root.setBackgroundColor(Ui.WORK);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(6), dp(6), dp(6), dp(6));
+        root.addView(col, new FrameLayout.LayoutParams(-1, -1));
+
+        LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.VERTICAL);
+        col.addView(top, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        // encabezado: escena (tocar = volver de un símbolo), pestañas y cerrar
+        LinearLayout head = new LinearLayout(this);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.setPadding(dp(4), 0, dp(4), dp(4));
+        docLabel = Ui.label(this, "", 13, 0xFFFFFFFF);
+        docLabel.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        docLabel.setSingleLine(true);
+        docLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        docLabel.setOnClickListener(v -> { if (st.inSymbol()) exitSymbol(); });
+        head.addView(docLabel, new LinearLayout.LayoutParams(0, -2, 1));
+        final TextView tabT = tab("Línea de tiempo"), tabP = tab("Propiedades");
+        head.addView(tabT, lpMargins(-2, dp(30), dp(4), 0, 0, 0));
+        head.addView(tabP, lpMargins(-2, dp(30), dp(4), 0, 0, 0));
+        TextView quitB = Ui.label(this, "  ⏻", 18, 0xFFFFFFFF);
+        quitB.setOnClickListener(v -> askQuit());
+        head.addView(quitB);
+        top.addView(head);
+
+        // herramientas en una tira que se desliza
+        android.widget.HorizontalScrollView ts = new android.widget.HorizontalScrollView(this);
+        ts.setHorizontalScrollBarEnabled(false);
+        Ui.panel(ts, Ui.orange(this));
+        LinearLayout strip = new LinearLayout(this);
+        strip.setPadding(dp(4), dp(2), dp(4), dp(2));
+        ts.addView(strip);
+        toolBtns = new Ui.ToolButton[State.TOOLS];
+        for (int i = 0; i < State.TOOLS; i++) {
+            final int tool = i;
+            Ui.ToolButton tb = new Ui.ToolButton(this, i);
+            tb.setOnClickListener(v -> setTool(tool));
+            if (i == State.BUCKET) tb.setOnLongClickListener(v -> { setTool(State.BUCKET); showProps(true); return true; });
+            toolBtns[i] = tb;
+            strip.addView(tb, new LinearLayout.LayoutParams(dp(46), dp(44)));
+        }
+        top.addView(ts, new LinearLayout.LayoutParams(-1, dp(50)));
+
+        // contenido: línea de tiempo o propiedades
+        FrameLayout content = new FrameLayout(this);
+        tl = new TimelineView(this, this);
+        tlBox = new FrameLayout(this);
+        Ui.panel(tlBox, Ui.glass(this));
+        tlBox.setPadding(dp(2), dp(2), dp(2), dp(2));
+        tlBox.addView(tl, new FrameLayout.LayoutParams(-1, -1));
+        content.addView(tlBox, new FrameLayout.LayoutParams(-1, -1));
+        propsView = buildProps();
+        content.addView(propsView, new FrameLayout.LayoutParams(-1, -1));
+        top.addView(content, lpMargins(-1, 0, 0, dp(6), 0, 0));
+        ((LinearLayout.LayoutParams) content.getLayoutParams()).weight = 1;
+        tabT.setOnClickListener(v -> showProps(false));
+        tabP.setOnClickListener(v -> showProps(true));
+        tabs = new TextView[]{tabT, tabP};
+
+        player = new PlayerBar(this, this);
+        top.addView(player, lpMargins(-1, dp(52), 0, dp(6), 0, 0));
+        android.widget.HorizontalScrollView cs = new android.widget.HorizontalScrollView(this);
+        cs.setHorizontalScrollBarEnabled(false);
+        cs.addView(buildControls());
+        top.addView(cs, lpMargins(-1, dp(46), 0, dp(6), 0, 0));
+
+        // mitad de abajo: la mesa
+        stage = new StageView(this, this);
+        FrameLayout sBox = new FrameLayout(this);
+        Ui.panel(sBox, Ui.glass(this));
+        sBox.addView(stage, new FrameLayout.LayoutParams(-1, -1));
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, 0, 1);
+        slp.setMargins(0, dp(6), 0, 0);
+        col.addView(sBox, slp);
+
+        showProps(false);
+        buildPreview();
+        setContentView(root);
+    }
+
+    private FrameLayout tlBox;
+    private View propsView;
+    private TextView[] tabs;
+
+    private TextView tab(String name) {
+        TextView t = Ui.label(this, name, 12, Ui.INK);
+        t.setGravity(Gravity.CENTER);
+        t.setPadding(dp(10), 0, dp(10), 0);
+        return t;
+    }
+
+    /** Mitad y mitad: muestra las propiedades (colores, grosor, opciones) o la línea de tiempo. */
+    private void showProps(boolean on) {
+        if (tabs == null) return;
+        propsView.setVisibility(on ? View.VISIBLE : View.GONE);
+        tlBox.setVisibility(on ? View.GONE : View.VISIBLE);
+        for (int i = 0; i < 2; i++) {
+            boolean sel = (i == 1) == on;
+            GradientDrawable g = new GradientDrawable();
+            g.setCornerRadius(dp(15));
+            g.setColor(sel ? 0xFFFFFFFF : 0x33FFFFFF);
+            tabs[i].setBackground(g);
+            tabs[i].setTextColor(sel ? Ui.INK : 0xFFFFFFFF);
+        }
     }
 
     private static LinearLayout.LayoutParams lpMargins(int w, int h, int l, int t, int r, int b) {

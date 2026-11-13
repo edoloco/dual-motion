@@ -78,7 +78,7 @@ public final class StageView extends View {
     }
 
     @Override protected void onSizeChanged(int w, int h, int ow, int oh) {
-        if (!fitted || ow == 0) fit();
+        if (!fitted || ow == 0 || (w > h) != (ow > oh)) fit(); // también al girar el teléfono
     }
 
     private float dx(float x) { return (x - tx) / s; }
