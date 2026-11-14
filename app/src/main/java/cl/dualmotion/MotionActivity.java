@@ -114,6 +114,7 @@ public final class MotionActivity extends Activity
         if (!isView()) loadAutosave();
         if (!isEdit()) restoreState();
         if (isEdit()) buildEdit(); else buildMain();
+        keepClearOfCutout(root);
         if (!isSolo()) { LinkService.start(this, role); LinkService.attach(this); }
         Sounds.onChange = () -> { if (tl != null) tl.invalidate(); };
         Sounds.warm(this, doc);
@@ -515,6 +516,25 @@ public final class MotionActivity extends Activity
             tabs[i].setBackground(g);
             tabs[i].setTextColor(sel ? Ui.INK : 0xFFFFFFFF);
         }
+    }
+
+    /**
+     * Notch y cámara: el contenido se corre para no quedar debajo; ese espacio queda vacío (solo el fondo).
+     * En el modo de un solo teléfono (parado) siempre se deja al menos una franja arriba, porque algunos
+     * teléfonos no informan la cámara perforada.
+     */
+    private void keepClearOfCutout(final View v) {
+        if (v == null) return;
+        final int bl = v.getPaddingLeft(), bt = v.getPaddingTop(), br = v.getPaddingRight(), bb = v.getPaddingBottom();
+        v.setOnApplyWindowInsetsListener((view, in) -> {
+            int l = 0, t = 0, r = 0, b = 0;
+            android.view.DisplayCutout dc = in.getDisplayCutout();
+            if (dc != null) { l = dc.getSafeInsetLeft(); t = dc.getSafeInsetTop(); r = dc.getSafeInsetRight(); b = dc.getSafeInsetBottom(); }
+            if (half()) t = Math.max(t, dp(28));
+            view.setPadding(bl + l, bt + t, br + r, bb + b);
+            return in;
+        });
+        v.requestApplyInsets();
     }
 
     private static LinearLayout.LayoutParams lpMargins(int w, int h, int l, int t, int r, int b) {

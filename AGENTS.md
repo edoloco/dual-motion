@@ -17,6 +17,10 @@ El nombre "Macromedia" o "Flash" **no aparece en la interfaz**: es la inspiraci�
 
 Las dos pantallas son UNA: lo repartido se comporta como un solo elemento.
 
+Notch y cámara: la pantalla usa todo (`LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES`), pero `keepClearOfCutout` corre
+el contenido según `DisplayCutout` (y en un solo teléfono, parado, deja al menos 28 dp arriba); ese espacio queda
+vacío.
+
 ## Reglas que no se rompen
 
 1. **Paquete `cl.dualmotion`**: no cambiarlo (los teléfonos perderían la app y su trabajo). Es una app aparte de
