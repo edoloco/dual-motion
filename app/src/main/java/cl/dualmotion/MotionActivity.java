@@ -368,10 +368,7 @@ public final class MotionActivity extends Activity
             else connectionDialog();
         });
         head.addView(connLabel);
-        TextView quitB = Ui.label(this, "  ⏻", 18, 0xFFFFFFFF);
-        quitB.setOnClickListener(v -> askQuit());
-        quitB.setOnLongClickListener(v -> { Ui.toast(this, "Cerrar DUAL Motion"); return true; });
-        head.addView(quitB);
+        head.addView(new Ui.AeroClose(this, this::askQuit), lpMargins(dp(34), dp(34), dp(8), 0, 0, 0));
         center.addView(head);
 
         // línea de tiempo
@@ -432,9 +429,7 @@ public final class MotionActivity extends Activity
         final TextView tabT = tab("Línea de tiempo"), tabP = tab("Propiedades");
         head.addView(tabT, lpMargins(-2, dp(30), dp(4), 0, 0, 0));
         head.addView(tabP, lpMargins(-2, dp(30), dp(4), 0, 0, 0));
-        TextView quitB = Ui.label(this, "  ⏻", 18, 0xFFFFFFFF);
-        quitB.setOnClickListener(v -> askQuit());
-        head.addView(quitB);
+        head.addView(new Ui.AeroClose(this, this::askQuit), lpMargins(dp(34), dp(34), dp(8), 0, 0, 0));
         top.addView(head);
 
         // herramientas en una tira que se desliza

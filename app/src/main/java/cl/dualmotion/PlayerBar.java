@@ -60,11 +60,16 @@ public final class PlayerBar extends View {
     }
 
     // ---------------------------------------------------------------- medidas
+    /** Con el teléfono parado no caben ⏮ y ⏭ (el inicio y el final se alcanzan con la barra de avance). */
+    private boolean narrow;
+
     private void layout(int w, int h) {
         float cy = h / 2f, x = 10 * dp;
         float sm = 15 * dp, big = 20 * dp, gap = 5 * dp;
         float[] rad = {sm, sm, big, sm, sm};
+        narrow = w < 560 * dp;
         for (int i = 0; i <= B_LAST; i++) {
+            if (narrow && (i == B_FIRST || i == B_LAST)) { btn[i].set(-9999, -9999, -9999, -9999); continue; }
             btn[i].set(x, cy - rad[i], x + rad[i] * 2, cy + rad[i]);
             x += rad[i] * 2 + gap;
         }
@@ -96,6 +101,7 @@ public final class PlayerBar extends View {
 
         for (int i = 0; i <= B_LAST; i++) {
             RectF b = btn[i];
+            if (b.left < -1000) continue; // escondido (teléfono parado)
             p.setColor(i == B_PLAY ? (pressed == i ? 0xFFCC0029 : RED) : (pressed == i ? 0xFF3D3D3D : CARD));
             c.drawCircle(b.centerX(), b.centerY(), b.width() / 2, p);
             icon(c, i, b);
@@ -105,9 +111,12 @@ public final class PlayerBar extends View {
         tp.setTextSize(11 * dp);
         tp.setColor(0xFFDDDDDD);
         float above = track.top - 7 * dp;
-        String tm = time(f, d.fps) + "  /  " + time(len, d.fps);
-        c.drawText(tm, track.left, above, tp);
-        String fr = "Fotograma " + (f + 1) + " de " + len;
+        // lo que quepa sobre la barra, sin montarse: largo, corto o solo el fotograma
+        String tm = time(f, d.fps) + "  /  " + time(len, d.fps), fr = "Fotograma " + (f + 1) + " de " + len;
+        float room = track.width();
+        if (tp.measureText(tm) + tp.measureText(fr) + 12 * dp > room) { tm = time(f, d.fps); fr = (f + 1) + " / " + len; }
+        if (tp.measureText(tm) + tp.measureText(fr) + 12 * dp > room) tm = "";
+        if (!tm.isEmpty()) c.drawText(tm, track.left, above, tp);
         c.drawText(fr, track.right - tp.measureText(fr), above, tp);
         tp.setTextSize(12 * dp);
         float ty = h / 2f + tp.getTextSize() * 0.36f;

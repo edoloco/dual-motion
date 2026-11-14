@@ -199,4 +199,65 @@ public final class Ui {
                 break;
         }
     }
+
+    // ---------------------------------------------------------------- botón cerrar (estilo Frutiger Aero)
+    /** Cuadrado rojo brillante con una X blanca, dibujado (no depende de la letra del teléfono). */
+    public static final class AeroClose extends View {
+        private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF r = new RectF();
+        private boolean down;
+
+        public AeroClose(Context c, Runnable onTap) {
+            super(c);
+            setContentDescription("Cerrar DUAL Motion");
+            setOnClickListener(v -> onTap.run());
+            setOnLongClickListener(v -> { toast(c, "Cerrar DUAL Motion"); return true; });
+        }
+
+        @Override public boolean onTouchEvent(android.view.MotionEvent e) {
+            int a = e.getActionMasked();
+            if (a == android.view.MotionEvent.ACTION_DOWN) { down = true; invalidate(); }
+            else if (a == android.view.MotionEvent.ACTION_UP || a == android.view.MotionEvent.ACTION_CANCEL) { down = false; invalidate(); }
+            return super.onTouchEvent(e);
+        }
+
+        @Override protected void onDraw(Canvas c) {
+            float d = getResources().getDisplayMetrics().density;
+            float s = Math.min(getWidth(), getHeight()) - 4 * d;
+            float x0 = (getWidth() - s) / 2f, y0 = (getHeight() - s) / 2f, rad = s * 0.24f;
+            r.set(x0, y0, x0 + s, y0 + s);
+            // sombra suave
+            p.setStyle(Paint.Style.FILL);
+            p.setShader(null);
+            p.setColor(0x33000000);
+            c.drawRoundRect(r.left, r.top + 1.5f * d, r.right, r.bottom + 1.5f * d, rad, rad, p);
+            // cuerpo: rojo brillante con degradado
+            p.setShader(new android.graphics.LinearGradient(0, r.top, 0, r.bottom,
+                    down ? new int[]{0xFFE04848, 0xFFB00000, 0xFF8A0000} : new int[]{0xFFFF7A6E, 0xFFE31B12, 0xFFB80A05},
+                    new float[]{0, 0.55f, 1}, android.graphics.Shader.TileMode.CLAMP));
+            c.drawRoundRect(r, rad, rad, p);
+            // brillo de vidrio en la mitad de arriba
+            RectF g = new RectF(r.left + s * 0.08f, r.top + s * 0.05f, r.right - s * 0.08f, r.top + s * 0.5f);
+            p.setShader(new android.graphics.LinearGradient(0, g.top, 0, g.bottom, 0xCCFFFFFF, 0x10FFFFFF,
+                    android.graphics.Shader.TileMode.CLAMP));
+            c.drawRoundRect(g, rad * 0.8f, rad * 0.8f, p);
+            p.setShader(null);
+            // borde
+            p.setStyle(Paint.Style.STROKE);
+            p.setStrokeWidth(1.2f * d);
+            p.setColor(0xFF7A0000);
+            c.drawRoundRect(r, rad, rad, p);
+            // X blanca con una sombrita
+            float m = s * 0.3f;
+            p.setStrokeCap(Paint.Cap.ROUND);
+            p.setStrokeWidth(s * 0.11f);
+            p.setColor(0x55600000);
+            c.drawLine(r.left + m, r.top + m + d, r.right - m, r.bottom - m + d, p);
+            c.drawLine(r.right - m, r.top + m + d, r.left + m, r.bottom - m + d, p);
+            p.setColor(0xFFFFFFFF);
+            c.drawLine(r.left + m, r.top + m, r.right - m, r.bottom - m, p);
+            c.drawLine(r.right - m, r.top + m, r.left + m, r.bottom - m, p);
+            p.setStyle(Paint.Style.FILL);
+        }
+    }
 }
