@@ -65,8 +65,10 @@ vacío.
 - `Sounds` — sonidos: original en `files/sonidos/id.ext`, PCM 16 bits estéreo 44,1 kHz en caché (`id.pcm`),
   picos cada 10 ms para la forma de onda, mezcla (`Plan` + `mix`) y `Player` (AudioTrack; la imagen sigue a lo que
   ya sonó). Traspaso: `moSnd {id,ext,i,n,d(base64)}` por la misma fila, antes de las órdenes que lo usan.
-- `Export` — MP4: H.264 dibujando cada fotograma en la superficie del codificador + AAC con la mezcla; tiempos
-  exactos n/fps; queda en Películas › DUAL Motion (MediaStore; en Android 9 archivo + permiso).
+- `Export` — MP4: cada fotograma se dibuja en un Bitmap y pasa por OpenGL (`Export.Gl`) a la superficie del
+  codificador H.264 con su tiempo exacto f/fps (`eglPresentationTimeANDROID`); AAC con la mezcla. No volver a
+  `lockCanvas`: así el tiempo es el del reloj, el codificador ve cientos de fps, se salta fotogramas y el sonido
+  se descalza. Queda en Películas › DUAL Motion (MediaStore; en Android 9 archivo + permiso).
 - `Ui` — cristal blanco con verde, panel naranja, botones de símbolo (nombre al mantener), íconos de herramientas.
 
 ## Sincronía (igual que DUAL-Draw)
