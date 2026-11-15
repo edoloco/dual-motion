@@ -850,6 +850,25 @@ public final class MDoc {
                 if (!L.keys.containsKey(0)) L.keys.put(0, new Key());
                 return true;
             }
+            case "pasteFrames": { // pegar fotogramas: reemplazan los de f a f+n-1; lo de después queda igual
+                if (L.audio) return false;
+                int n = Math.max(1, m.optInt("n", 1));
+                JSONArray ks = m.optJSONArray("keys");
+                if (ks == null || ks.length() == 0) return false;
+                push(pl);
+                keepAt(L, f + n);
+                if (f + n > L.len) L.len = f + n;
+                for (int g = f; g < f + n; g++) L.keys.remove(g);
+                for (int i = 0; i < ks.length(); i++) {
+                    JSONObject e = ks.getJSONObject(i);
+                    int o = e.optInt("o", -1);
+                    if (o < 0 || o >= n) continue;
+                    L.keys.put(f + o, keyFrom(e.getJSONObject("k")));
+                }
+                if (!L.keys.containsKey(f)) L.keys.put(f, new Key());
+                if (!L.keys.containsKey(0)) L.keys.put(0, new Key());
+                return true;
+            }
             case "moveKey": { // arrastrar un fotograma clave a otro fotograma (si ahí había uno, lo reemplaza)
                 int to = m.optInt("to", -1);
                 if (to < 0 || to == f || !L.keys.containsKey(f)) return false;
@@ -1113,6 +1132,77 @@ public final class MDoc {
         if (c == 0) return 0;
         int al = Math.round((c >>> 24) * a);
         return (c & 0x00FFFFFF) | (al << 24);
+    }
+
+    // ---------------------------------------------------------------- copiar y pegar fotogramas
+    static JSONObject keyJson(Key k) throws JSONException {
+        JSONObject o = new JSONObject();
+        JSONArray ss = new JSONArray();
+        for (Shape s : k.shapes) ss.put(s.toJson());
+        o.put("s", ss);
+        k.toJson(o);
+        return o;
+    }
+
+    static Key keyFrom(JSONObject o) {
+        Key k = new Key();
+        k.fromJson(o);
+        JSONArray ss = o.optJSONArray("s");
+        if (ss != null) for (int j = 0; j < ss.length(); j++) {
+            JSONObject so = ss.optJSONObject(j);
+            if (so != null) k.shapes.add(Shape.from(so));
+        }
+        return k;
+    }
+
+    /**
+     * Copiar fotogramas (como en Flash): n fotogramas desde f de la capa. El primero se copia tal como se ve (con
+     * lo interpolado), los claves de dentro tal cual. Devuelve {n, keys:[{o, k}]} o null si no hay nada.
+     */
+    public static JSONObject copyFrames(Layer L, int f, int n) {
+        if (L == null || L.audio || f >= L.len) return null;
+        n = Math.max(1, Math.min(n, L.len - f));
+        try {
+            JSONObject c = new JSONObject();
+            c.put("n", n);
+            JSONArray ks = new JSONArray();
+            Key first = L.keys.get(f);
+            if (first == null) {
+                Pose ps = pose(L, f);
+                if (ps == null) return null;
+                first = ps.key.copy();
+                poseInto(ps, first);
+                advance(first, f - ps.keyFrame);
+                Key A = L.keys.floorEntry(f).getValue();
+                first.tween = A.tween; first.ease = A.ease.clone(); first.spin = 0;
+            }
+            // si la interpolación sigue después del tramo copiado, al pegar no tiene adónde llegar
+            for (int o = 0; o < n; o++) {
+                Key k = o == 0 ? first : L.keys.get(f + o);
+                if (k == null) continue;
+                Key kk = k.copy();
+                if (kk.tween && L.keys.higherKey(f + o) != null && L.keys.higherKey(f + o) >= f + n) kk.tween = false;
+                JSONObject e = new JSONObject();
+                e.put("o", o);
+                e.put("k", keyJson(kk));
+                ks.put(e);
+            }
+            c.put("keys", ks);
+            return c;
+        } catch (JSONException e) { return null; }
+    }
+
+    /** Clave en g con lo que se ve ahí (si no lo hay), para que lo de después de un pegado no cambie. */
+    private static void keepAt(Layer L, int g) {
+        if (g >= L.len || L.keys.containsKey(g)) return;
+        Pose ps = pose(L, g);
+        if (ps == null) return;
+        Key k = ps.key.copy();
+        poseInto(ps, k);
+        advance(k, g - ps.keyFrame);
+        Key A = L.keys.floorEntry(g).getValue();
+        k.tween = A.tween; k.ease = A.ease.clone(); k.spin = 0;
+        L.keys.put(g, k);
     }
 
     /** Las instancias de un clave copiado "más adelante" siguen su animación donde iba (no vuelven a empezar). */

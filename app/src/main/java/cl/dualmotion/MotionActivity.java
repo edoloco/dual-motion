@@ -643,6 +643,8 @@ public final class MotionActivity extends Activity
                 () -> frameOp("frame", false)));
         wide(addBtn(c, "F5 －", "Quitar fotograma (Mayús+F5)", () -> frameOp("delFrame", false)));
         addBtn(c, "↝", "Crear / quitar interpolación de movimiento", this::toggleTween);
+        addBtn(c, "⧉", "Copiar fotograma (mantén presionado un fotograma para copiar varios)", () -> copyFrames(st.layer, st.frame, 1));
+        addBtn(c, "📋", "Pegar fotogramas en el fotograma elegido", () -> pasteFrames(st.layer, st.frame));
         addBtn(c, "✂", "Cortar el sonido en el cabezal", this::cutClip);
         addBtn(c, "🖼", "Importar imagen", this::addImage);
         return c;
@@ -1661,7 +1663,9 @@ public final class MotionActivity extends Activity
         final boolean tw = ke != null && ke.getValue().tween;
         String[] items = {"Insertar fotograma clave", "Insertar fotograma clave vacío", "Insertar fotograma",
                 "Quitar fotograma", "Quitar fotograma clave",
-                tw ? "Quitar interpolación de movimiento" : "Crear interpolación de movimiento"};
+                tw ? "Quitar interpolación de movimiento" : "Crear interpolación de movimiento",
+                "Copiar fotograma", "Copiar varios fotogramas desde aquí…",
+                clip == null ? "Pegar fotogramas (no hay nada copiado)" : "Pegar " + clipName()};
         new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
                 .setTitle("Fotograma " + (frame + 1))
                 .setItems(items, (d, w) -> {
@@ -1675,8 +1679,61 @@ public final class MotionActivity extends Activity
                             if (tw) request(op("tween", "l", layer, "f", frame, "on", false));
                             else createTween(layer, frame);
                             break;
+                        case 6: copyFrames(layer, frame, 1); break;
+                        case 7: copyManyDialog(layer, frame); break;
+                        case 8: pasteFrames(layer, frame); break;
                     }
                 }).show();
+    }
+
+    // ================================================================ copiar y pegar fotogramas (como en Flash)
+    /** Portapapeles de fotogramas: {n, keys:[{o, k}]}; vale entre capas y dentro de símbolos. */
+    private JSONObject clip;
+
+    private String clipName() {
+        int n = clip == null ? 0 : clip.optInt("n", 1);
+        return n == 1 ? "1 fotograma" : n + " fotogramas";
+    }
+
+    private void copyFrames(int layer, int frame, int n) {
+        JSONObject c = MDoc.copyFrames(lay(layer), frame, n);
+        if (c == null) { Ui.toast(this, "Ahí no hay fotogramas para copiar"); return; }
+        clip = c;
+        Ui.toast(this, "Copiado: " + clipName() + ". Elige dónde y toca Pegar");
+        refreshProps();
+    }
+
+    private void copyManyDialog(final int layer, final int frame) {
+        MDoc.Layer L = lay(layer);
+        if (L == null || L.audio || frame >= L.len) { Ui.toast(this, "Ahí no hay fotogramas para copiar"); return; }
+        final int max = L.len - frame;
+        final EditText e = new EditText(this);
+        e.setInputType(InputType.TYPE_CLASS_NUMBER);
+        e.setText(String.valueOf(max));
+        e.setSelectAllOnFocus(true);
+        new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setTitle("Copiar fotogramas")
+                .setMessage("¿Cuántos fotogramas desde el " + (frame + 1) + "? (hasta " + max + ", el final de la capa)")
+                .setView(e)
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Copiar", (d, w) -> {
+                    int n;
+                    try { n = Integer.parseInt(e.getText().toString().trim()); } catch (Exception x) { n = max; }
+                    copyFrames(layer, frame, Math.max(1, Math.min(max, n)));
+                }).show();
+    }
+
+    private void pasteFrames(int layer, int frame) {
+        if (clip == null) { Ui.toast(this, "Primero copia fotogramas"); return; }
+        MDoc.Layer L = lay(layer);
+        if (L == null || L.audio) { Ui.toast(this, "Elige una capa de dibujo"); return; }
+        if (L.lock) { Ui.toast(this, "La capa está bloqueada"); return; }
+        try {
+            JSONObject o = op("pasteFrames", "l", layer, "f", frame, "n", clip.optInt("n", 1));
+            o.put("keys", new org.json.JSONArray(clip.getJSONArray("keys").toString()));
+            request(o);
+            Ui.toast(this, "Pegado: " + clipName() + " desde el fotograma " + (frame + 1));
+        } catch (JSONException ignored) { }
     }
 
     @Override public void layerMenu(final int layer) {

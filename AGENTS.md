@@ -186,6 +186,13 @@ en los dos teléfonos.
   naranjo muestra dónde queda. Orden `moveKey {l,f,to}` (si ahí había un clave, lo reemplaza; mover el primero
   deja fotogramas vacíos antes). La barra de abajo lleva las teclas de Flash: "● F6", "○ F7", "F5 ＋" (insertar,
   o extender la capa hasta el cabezal si está más allá del final), "F5 －" (quitar).
+- Copiar / pegar fotogramas (como Flash): menú del fotograma "Copiar fotograma", "Copiar varios fotogramas desde
+  aquí…" (pregunta cuántos) y "Pegar …"; en la barra ⧉ (copiar el elegido) y 📋 (pegar en el elegido). El
+  portapapeles vive en la principal (`MotionActivity.clip`, `{n, keys:[{o,k}]}` de `MDoc.copyFrames`): el primer
+  fotograma se copia tal como se ve (pose interpolada, ciclo del símbolo avanzado), los claves de dentro tal cual;
+  una interpolación que salía del tramo se corta. Sirve entre capas, dentro de símbolos y hacia fuera. Orden
+  `pasteFrames {l,f,n,keys}`: guarda en f+n un clave con lo que se veía (para no cambiar lo de después),
+  reemplaza los fotogramas f…f+n-1, alarga la capa si hace falta; no en capas de audio. Un solo deshacer.
 - Mantener presionado el nombre de una capa: Renombrar, Eliminar capa, Insertar capa encima, Subir, Bajar,
   Ocultar/Mostrar, Bloquear.
 - Encabezado: ＋ capa, − capa (elimina la actual), ♪ agregar sonido (crea una capa de sonido arriba de la actual si hace falta y pone
