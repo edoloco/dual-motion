@@ -1499,7 +1499,7 @@ public final class MotionActivity extends Activity
 
     /** Llegó un archivo de sonido elegido: se importa y se pone en el cabezal (en una capa de sonido). */
     void importSound(Uri u) {
-        Ui.toast(this, "Cargando el sonido…");
+        Ui.toast(this, "Cargando el sonido… (uno de varios minutos puede tardar un rato)");
         Sounds.importUri(this, u, (snd, err) -> {
             if (snd == null) { Ui.toast(this, "No se pudo cargar el sonido: " + err); return; }
             if (isView()) Sounds.sendFile(this, snd.id, snd.ext); // el archivo viaja antes que las órdenes

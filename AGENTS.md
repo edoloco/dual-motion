@@ -192,6 +192,10 @@ en los dos teléfonos.
   La barra de fotogramas del principal (F6, F7, F5＋, F5－, ⏯, ↝, ✂, 🖼) reparte el ancho con pesos para que todo
   quede a la vista (en el modo solo va con desplazamiento). El portapapeles de fotogramas se comparte: al copiar se
   manda `moClip {c}` al otro teléfono.
+- Sonidos largos (probado el caso de 17 min): el PCM nunca está entero en la memoria de Java. `Sounds.decodeTo`
+  decodifica y cambia a estéreo 44.1 kHz sobre la marcha (`Resampler`) escribiendo `id.pcm`, y `Sounds.Pcm` lo
+  lee con memoria mapeada (`FileChannel.map`). `sendFile` manda en un hilo, de a poco (espera mientras
+  `Net.queued() > 6`) y no dos veces el mismo; `Files.read` abre el .dmo de corrido, sin cargarlo entero.
 - Agregar sonido (`importSound` → `placeSound`): pregunta si empieza en el cabezal o en el fotograma 1 (música de
   fondo). Nunca encima de otro sonido: si la capa de sonido elegida tiene ese tramo libre va ahí; si no, crea una
   capa de sonido nueva con el nombre del sonido, que queda elegida. Avisa si dura más que la animación. No dentro

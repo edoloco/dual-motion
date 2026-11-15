@@ -55,6 +55,8 @@ public final class LinkService extends Service implements Net.Listener {
 
     static boolean isConnected() { return connected; }
 
+    static int queued() { LinkService s = inst; return s != null && s.net != null ? s.net.queued() : 0; }
+
     static String peer() { LinkService s = inst; return s != null && s.net != null ? s.net.peer() : null; }
 
     static void connectTo(String ip) { LinkService s = inst; if (s != null && s.net != null) s.net.connectTo(ip); }

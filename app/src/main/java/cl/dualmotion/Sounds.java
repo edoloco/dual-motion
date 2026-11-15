@@ -40,7 +40,6 @@ final class Sounds {
 
     static final int RATE = 44100;
     private static final Handler main = new Handler(Looper.getMainLooper());
-    private static final HashMap<String, short[]> pcmCache = new HashMap<>();
     private static final HashMap<String, float[]> peakCache = new HashMap<>();
     /** Aviso para refrescar la pantalla cuando un sonido termina de cargarse o de llegar. */
     static volatile Runnable onChange;
@@ -62,28 +61,58 @@ final class Sounds {
     }
 
     // ---------------------------------------------------------------- PCM y forma de onda
-    static synchronized short[] cached(String id) { return pcmCache.get(id); }
+    /**
+     * PCM ya decodificado (16 bits, estéreo intercalado, 44.1 kHz) leído directo del archivo id.pcm con memoria
+     * mapeada: no ocupa la memoria de la app, así que un sonido de muchos minutos (17 min ≈ 180 MB) no la hace caer.
+     * Solo lectura con índices absolutos: se puede leer desde varios hilos a la vez.
+     */
+    static final class Pcm {
+        private final java.nio.ShortBuffer b;
+        final int length; // muestras (2 por instante)
+        Pcm(java.nio.ShortBuffer b) { this.b = b; this.length = b.limit(); }
+        short get(int i) { return b.get(i); }
+        int frames() { return length / 2; }
+    }
+
+    private static final HashMap<String, Pcm> pcmCache = new HashMap<>();
+
+    static synchronized Pcm cached(String id) { return pcmCache.get(id); }
 
     static synchronized float[] peaks(String id) { return peakCache.get(id); }
 
-    /** PCM del sonido (lo decodifica la primera vez). Puede tardar: no llamar desde la pantalla. */
-    static short[] pcm(Context c, MDoc.Sound s) {
-        short[] p = cached(s.id);
+    /** PCM del sonido (lo decodifica la primera vez a id.pcm). Puede tardar: no llamar desde la pantalla. */
+    static Pcm pcm(Context c, MDoc.Sound s) {
+        Pcm p = cached(s.id);
         if (p != null) return p;
-        File pf = new File(dir(c), s.id + ".pcm");
-        try {
-            if (pf.isFile()) p = readPcm(pf);
-            else {
-                File f = file(c, s.id, s.ext);
-                if (!f.isFile()) return null;
-                p = decode(f);
-                writePcm(pf, p);
-            }
-        } catch (Exception e) { return null; }
-        float[] pk = computePeaks(p);
-        synchronized (Sounds.class) { pcmCache.put(s.id, p); peakCache.put(s.id, pk); }
+        synchronized (decoding) { // el mismo sonido no se decodifica dos veces a la vez
+            p = cached(s.id);
+            if (p != null) return p;
+            File pf = new File(dir(c), s.id + ".pcm");
+            try {
+                if (!pf.isFile() || pf.length() < 4) {
+                    File f = file(c, s.id, s.ext);
+                    if (!f.isFile()) return null;
+                    decodeTo(f, pf);
+                }
+                p = map(pf);
+            } catch (Throwable e) { return null; }
+            if (p.length < 2) return null;
+            float[] pk = computePeaks(p);
+            synchronized (Sounds.class) { pcmCache.put(s.id, p); peakCache.put(s.id, pk); }
+        }
         changed();
         return p;
+    }
+
+    private static final Object decoding = new Object();
+
+    private static Pcm map(File f) throws Exception {
+        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(f, "r");
+             java.nio.channels.FileChannel ch = raf.getChannel()) {
+            long n = ch.size() & ~1L;
+            java.nio.MappedByteBuffer mb = ch.map(java.nio.channels.FileChannel.MapMode.READ_ONLY, 0, n);
+            return new Pcm(mb.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()); // sigue válido al cerrar el archivo
+        }
     }
 
     /** Carga en segundo plano todos los sonidos del documento que estén en este teléfono. */
@@ -97,50 +126,24 @@ final class Sounds {
     /** Un valor por cada 10 ms: el pico (0..1). */
     static final int PEAK_MS = 10;
 
-    private static float[] computePeaks(short[] p) {
+    private static float[] computePeaks(Pcm p) {
         int per = RATE * PEAK_MS / 1000;
-        int frames = p.length / 2;
+        int frames = p.frames();
         float[] out = new float[frames / per + 1];
         for (int i = 0; i < frames; i++) {
-            int a = Math.max(Math.abs(p[i * 2]), Math.abs(p[i * 2 + 1]));
+            int a = Math.max(Math.abs(p.get(i * 2)), Math.abs(p.get(i * 2 + 1)));
             int k = i / per;
             if (a > out[k] * 32768) out[k] = a / 32768f;
         }
         return out;
     }
 
-    private static short[] readPcm(File f) throws Exception {
-        int n = (int) (f.length() / 2);
-        short[] p = new short[n];
-        try (DataInputStream in = new DataInputStream(new BufferedInputStream(new FileInputStream(f), 1 << 16))) {
-            byte[] b = new byte[1 << 16];
-            int i = 0;
-            while (i < n) {
-                int want = Math.min(b.length, (n - i) * 2);
-                in.readFully(b, 0, want);
-                ByteBuffer.wrap(b, 0, want).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(p, i, want / 2);
-                i += want / 2;
-            }
-        }
-        return p;
-    }
-
-    private static void writePcm(File f, short[] p) throws Exception {
-        File tmp = new File(f.getPath() + ".tmp");
-        try (OutputStream out = new BufferedOutputStream(new FileOutputStream(tmp), 1 << 16)) {
-            ByteBuffer bb = ByteBuffer.allocate(1 << 16).order(ByteOrder.LITTLE_ENDIAN);
-            for (short v : p) {
-                if (bb.remaining() < 2) { out.write(bb.array(), 0, bb.position()); bb.clear(); }
-                bb.putShort(v);
-            }
-            out.write(bb.array(), 0, bb.position());
-        }
-        //noinspection ResultOfMethodCallIgnored
-        tmp.renameTo(f);
-    }
-
     // ---------------------------------------------------------------- decodificar (MediaCodec) → estéreo 44.1 kHz
-    static short[] decode(File f) throws Exception {
+    /**
+     * Decodifica el archivo y escribe el PCM estéreo 44.1 kHz directo al disco mientras avanza (nunca tiene el
+     * sonido entero en memoria). La frecuencia se cambia con interpolación lineal sobre la marcha.
+     */
+    static void decodeTo(File f, File pcmFile) throws Exception {
         MediaExtractor ex = new MediaExtractor();
         ex.setDataSource(f.getPath());
         int track = -1;
@@ -157,10 +160,11 @@ final class Sounds {
         MediaCodec dec = MediaCodec.createDecoderByType(fmt.getString(MediaFormat.KEY_MIME));
         dec.configure(fmt, null, null, 0);
         dec.start();
-        ShortList out = new ShortList();
+        File tmp = new File(pcmFile.getPath() + ".tmp");
+        Resampler rs = null;
         MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
         boolean inDone = false, outDone = false;
-        try {
+        try (OutputStream out = new BufferedOutputStream(new FileOutputStream(tmp), 1 << 16)) {
             while (!outDone) {
                 if (!inDone) {
                     int ib = dec.dequeueInputBuffer(5000);
@@ -180,50 +184,74 @@ final class Sounds {
                 } else if (ob >= 0) {
                     ByteBuffer buf = dec.getOutputBuffer(ob);
                     if (buf != null && info.size > 0) {
+                        if (rs == null) rs = new Resampler(Math.max(1, ch), Math.max(1, rate), out);
                         buf.position(info.offset);
                         buf.limit(info.offset + info.size);
                         ByteBuffer le = buf.slice().order(ByteOrder.nativeOrder());
-                        if (isFloat) { while (le.remaining() >= 4) out.add((short) Math.max(-32768, Math.min(32767, le.getFloat() * 32767f))); }
-                        else { while (le.remaining() >= 2) out.add(le.getShort()); }
+                        if (isFloat) { while (le.remaining() >= 4) rs.add((short) Math.max(-32768, Math.min(32767, le.getFloat() * 32767f))); }
+                        else { while (le.remaining() >= 2) rs.add(le.getShort()); }
                     }
                     dec.releaseOutputBuffer(ob, false);
                     if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) outDone = true;
                 }
             }
+            if (rs != null) rs.finish();
         } finally {
             try { dec.stop(); } catch (Exception ignored) { }
             dec.release();
             ex.release();
         }
-        return toStereo44(out.a, out.n, Math.max(1, ch), rate);
+        if (rs == null) { //noinspection ResultOfMethodCallIgnored
+            tmp.delete(); throw new Exception("sin muestras"); }
+        if (!tmp.renameTo(pcmFile)) throw new Exception("no se pudo guardar");
     }
 
-    /** Lleva cualquier cantidad de canales y frecuencia a estéreo 44.1 kHz (interpolación lineal). */
-    static short[] toStereo44(short[] src, int n, int ch, int rate) {
-        int frames = n / ch;
-        long outFrames = (long) frames * RATE / Math.max(1, rate);
-        short[] out = new short[(int) outFrames * 2];
-        double step = rate / (double) RATE;
-        for (int i = 0; i < outFrames; i++) {
-            double pos = i * step;
-            int a = (int) pos;
-            float t = (float) (pos - a);
-            int b = Math.min(frames - 1, a + 1);
-            for (int k = 0; k < 2; k++) {
-                int cc = ch == 1 ? 0 : k;
-                float va = src[a * ch + cc], vb = src[b * ch + cc];
-                out[i * 2 + k] = (short) (va + (vb - va) * t);
-            }
+    /** Lleva cualquier cantidad de canales y frecuencia a estéreo 44.1 kHz, muestra por muestra, al disco. */
+    static final class Resampler {
+        private final int ch;
+        private final double step;
+        private final OutputStream out;
+        private final ByteBuffer bb = ByteBuffer.allocate(1 << 16).order(ByteOrder.LITTLE_ENDIAN);
+        private final short[] frame;
+        private int got;
+        private long inFrames, outFrames;
+        private double pos; // instante de salida, medido en instantes de entrada
+        private float pl, pr; // instante de entrada anterior
+
+        Resampler(int ch, int rate, OutputStream out) {
+            this.ch = ch;
+            this.step = rate / (double) RATE;
+            this.out = out;
+            this.frame = new short[ch];
         }
-        return out;
-    }
 
-    private static final class ShortList {
-        short[] a = new short[1 << 16];
-        int n;
-        void add(short v) {
-            if (n == a.length) { short[] b = new short[a.length * 2]; System.arraycopy(a, 0, b, 0, n); a = b; }
-            a[n++] = v;
+        void add(short v) throws java.io.IOException {
+            frame[got++] = v;
+            if (got < ch) return;
+            got = 0;
+            float l = frame[0], r = ch == 1 ? frame[0] : frame[1];
+            if (inFrames > 0) { // salidas entre el instante anterior (inFrames-1) y este
+                while (pos < inFrames) {
+                    float t = (float) (pos - (inFrames - 1));
+                    put(pl + (l - pl) * t, pr + (r - pr) * t);
+                    pos = ++outFrames * step;
+                }
+            }
+            pl = l; pr = r;
+            inFrames++;
+        }
+
+        void finish() throws java.io.IOException {
+            long total = (long) (inFrames / step); // como antes: instantes de entrada × 44100 / frecuencia
+            while (outFrames < total) { put(pl, pr); outFrames++; }
+            out.write(bb.array(), 0, bb.position());
+            bb.clear();
+        }
+
+        private void put(float l, float r) throws java.io.IOException {
+            if (bb.remaining() < 4) { out.write(bb.array(), 0, bb.position()); bb.clear(); }
+            bb.putShort((short) l);
+            bb.putShort((short) r);
         }
     }
 
@@ -248,13 +276,13 @@ final class Sounds {
                     int n;
                     while ((n = in.read(b)) > 0) out.write(b, 0, n);
                 }
-                short[] p = pcm(c, s);
+                Pcm p = pcm(c, s);
                 if (p == null) {
                     //noinspection ResultOfMethodCallIgnored
                     f.delete();
                     throw new Exception("este formato de audio no se puede leer");
                 }
-                s.dur = (int) ((long) (p.length / 2) * 1000 / RATE);
+                s.dur = (int) ((long) p.frames() * 1000 / RATE);
                 main.post(() -> done.done(s, null));
             } catch (Exception e) {
                 final String msg = e.getMessage() != null ? e.getMessage() : "error";
@@ -268,22 +296,39 @@ final class Sounds {
     private static final HashSet<String> asked = new HashSet<>();
 
     /** Manda el archivo al otro teléfono, en trozos (la misma fila que las órdenes: llega antes que ellas). */
+    private static final HashSet<String> sending = new HashSet<>();
+
+    /**
+     * Manda el archivo en un hilo aparte, de a poco (espera que salgan los trozos anteriores): así un sonido largo
+     * no llena la memoria ni congela la pantalla. Si el otro lo pide mientras va en camino, no se manda dos veces.
+     */
     static void sendFile(Context c, String id, String ext) {
-        File f = file(c, id, ext);
+        final File f = file(c, id, ext);
         if (!f.isFile()) return;
-        try (InputStream in = new FileInputStream(f)) {
-            long len = f.length();
-            int n = (int) Math.max(1, (len + CHUNK - 1) / CHUNK);
-            byte[] b = new byte[CHUNK];
-            for (int i = 0; i < n; i++) {
-                int got = 0, r;
-                while (got < CHUNK && (r = in.read(b, got, CHUNK - got)) > 0) got += r;
-                JSONObject m = new JSONObject();
-                m.put("t", "moSnd"); m.put("id", id); m.put("ext", ext); m.put("i", i); m.put("n", n);
-                m.put("d", Base64.encodeToString(b, 0, got, Base64.NO_WRAP));
-                LinkService.send(m);
+        synchronized (sending) { if (!sending.add(id)) return; }
+        new Thread(() -> {
+            try (InputStream in = new FileInputStream(f)) {
+                long len = f.length();
+                int n = (int) Math.max(1, (len + CHUNK - 1) / CHUNK);
+                byte[] b = new byte[CHUNK];
+                for (int i = 0; i < n; i++) {
+                    long t0 = System.currentTimeMillis();
+                    while (LinkService.queued() > 6) {
+                        if (System.currentTimeMillis() - t0 > 60000) return; // la conexión no avanza
+                        Thread.sleep(15);
+                    }
+                    int got = 0, r;
+                    while (got < CHUNK && (r = in.read(b, got, CHUNK - got)) > 0) got += r;
+                    JSONObject m = new JSONObject();
+                    m.put("t", "moSnd"); m.put("id", id); m.put("ext", ext); m.put("i", i); m.put("n", n);
+                    m.put("d", Base64.encodeToString(b, 0, got, Base64.NO_WRAP));
+                    LinkService.send(m);
+                }
+            } catch (Exception ignored) {
+            } finally {
+                synchronized (sending) { sending.remove(id); }
             }
-        } catch (Exception ignored) { }
+        }, "dm-mandar-sonido").start();
     }
 
     /** Llegó un trozo de archivo. */
@@ -336,7 +381,7 @@ final class Sounds {
     // ---------------------------------------------------------------- mezcla
     /** Foto de los trozos a sonar (se toma en la pantalla; la mezcla corre en otro hilo sin tocar el documento). */
     static final class Plan {
-        final ArrayList<short[]> pcm = new ArrayList<>();
+        final ArrayList<Pcm> pcm = new ArrayList<>();
         final ArrayList<long[]> pos = new ArrayList<>(); // inicio en la línea de tiempo, inicio en el sonido, largo (muestras)
         final ArrayList<Float> vol = new ArrayList<>();
         boolean isEmpty() { return pcm.isEmpty(); }
@@ -350,7 +395,7 @@ final class Sounds {
             for (MDoc.Clip k : L.clips) {
                 MDoc.Sound s = d.sound(k.s);
                 if (s == null) continue;
-                short[] data = load ? pcm(c, s) : cached(s.id);
+                Pcm data = load ? pcm(c, s) : cached(s.id);
                 if (data == null) continue;
                 p.pcm.add(data);
                 p.pos.add(new long[]{(long) k.at * RATE / 1000, (long) k.in * RATE / 1000, (long) k.len * RATE / 1000});
@@ -364,7 +409,7 @@ final class Sounds {
     static void mix(Plan p, long start, short[] out, int frames) {
         int[] acc = new int[frames * 2];
         for (int k = 0; k < p.pcm.size(); k++) {
-            short[] src = p.pcm.get(k);
+            Pcm src = p.pcm.get(k);
             long[] q = p.pos.get(k);
             float v = p.vol.get(k);
             long a = Math.max(start, q[0]), b = Math.min(start + frames, q[0] + q[2]);
@@ -372,8 +417,8 @@ final class Sounds {
                 long si = (q[1] + (t - q[0])) * 2;
                 if (si + 1 >= src.length) break;
                 int o = (int) (t - start) * 2;
-                acc[o] += (int) (src[(int) si] * v);
-                acc[o + 1] += (int) (src[(int) si + 1] * v);
+                acc[o] += (int) (src.get((int) si) * v);
+                acc[o + 1] += (int) (src.get((int) si + 1) * v);
             }
         }
         for (int i = 0; i < frames * 2; i++) out[i] = (short) Math.max(-32768, Math.min(32767, acc[i]));

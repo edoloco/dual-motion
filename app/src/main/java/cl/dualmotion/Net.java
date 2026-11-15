@@ -110,17 +110,25 @@ public final class Net {
     }
 
     // ---------------------------------------------------------------- enviar
+    private final java.util.concurrent.atomic.AtomicInteger queued = new java.util.concurrent.atomic.AtomicInteger();
+
+    /** Mensajes esperando salir (para que un archivo grande se mande de a poco y no llene la memoria). */
+    public int queued() { return queued.get(); }
+
     public void send(JSONObject m) {
         final String line = m.toString();
+        queued.incrementAndGet();
         out.execute(() -> {
-            BufferedWriter w = writer;
-            if (w == null) return;
             try {
+                BufferedWriter w = writer;
+                if (w == null) return;
                 w.write(line);
                 w.write('\n');
                 w.flush();
             } catch (Exception e) {
                 closeSock();
+            } finally {
+                queued.decrementAndGet();
             }
         });
     }

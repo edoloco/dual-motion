@@ -155,12 +155,16 @@ final class Files {
 
     /** Lee un .dmo (o un JSON suelto, por si acaso); los sonidos que trae quedan en la carpeta de sonidos. */
     static JSONObject read(Context a, Uri u) {
-        try (InputStream in = a.getContentResolver().openInputStream(u)) {
-            if (in == null) return null;
-            byte[] all = readAll(in);
-            if (all.length > 0 && all[0] == '{') return new JSONObject(new String(all, StandardCharsets.UTF_8));
+        try (InputStream raw = a.getContentResolver().openInputStream(u)) {
+            if (raw == null) return null;
+            // se lee de corrido (sin cargar el archivo entero): un .dmo con sonidos largos puede pesar mucho
+            java.io.BufferedInputStream in = new java.io.BufferedInputStream(raw, 1 << 16);
+            in.mark(4);
+            int first = in.read();
+            in.reset();
+            if (first == '{') return new JSONObject(new String(readAll(in), StandardCharsets.UTF_8));
             JSONObject doc = null;
-            try (ZipInputStream z = new ZipInputStream(new java.io.ByteArrayInputStream(all))) {
+            try (ZipInputStream z = new ZipInputStream(in)) {
                 ZipEntry e;
                 while ((e = z.getNextEntry()) != null) {
                     String nm = e.getName();
@@ -169,16 +173,27 @@ final class Files {
                         if (d.has("layers")) doc = d;
                     } else if (nm.startsWith("imagenes/") && nm.substring(9).matches("[a-z0-9]+\\.(png|jpg)")) {
                         java.io.File f = new java.io.File(Images.dir(a), nm.substring(9));
-                        if (!f.isFile()) try (OutputStream o = new java.io.FileOutputStream(f)) { o.write(readAll(z)); }
+                        if (!f.isFile()) copyTo(z, f);
                     } else if (nm.startsWith("sonidos/") && nm.substring(8).matches("[a-z0-9]+\\.[a-z0-9]{1,5}")) {
                         java.io.File f = new java.io.File(Sounds.dir(a), nm.substring(8));
-                        if (!f.isFile()) try (OutputStream o = new java.io.FileOutputStream(f)) { o.write(readAll(z)); }
+                        if (!f.isFile()) copyTo(z, f);
                     }
                 }
             }
             return doc;
         } catch (Exception ignored) { }
         return null;
+    }
+
+    private static void copyTo(InputStream in, java.io.File f) throws java.io.IOException {
+        java.io.File tmp = new java.io.File(f.getPath() + ".tmp");
+        try (OutputStream o = new java.io.FileOutputStream(tmp)) {
+            byte[] buf = new byte[1 << 16];
+            int n;
+            while ((n = in.read(buf)) > 0) o.write(buf, 0, n);
+        }
+        //noinspection ResultOfMethodCallIgnored
+        tmp.renameTo(f);
     }
 
     private static byte[] readAll(InputStream in) throws java.io.IOException {
