@@ -186,6 +186,10 @@ en los dos teléfonos.
   naranjo muestra dónde queda. Orden `moveKey {l,f,to}` (si ahí había un clave, lo reemplaza; mover el primero
   deja fotogramas vacíos antes). La barra de abajo lleva las teclas de Flash: "● F6", "○ F7", "F5 ＋" (insertar,
   o extender la capa hasta el cabezal si está más allá del final), "F5 －" (quitar).
+- Botonera de la mesa (`addStageBar`, a la derecha de la mesa en el extendido y en el modo solo): ↶ ↷ ⏯ ⧉ 📋.
+  La barra de fotogramas del principal (F6, F7, F5＋, F5－, ⏯, ↝, ✂, 🖼) reparte el ancho con pesos para que todo
+  quede a la vista (en el modo solo va con desplazamiento). El portapapeles de fotogramas se comparte: al copiar se
+  manda `moClip {c}` al otro teléfono.
 - Probar aquí (Enter de Flash): botón ⏯ en la barra de fotogramas, mantener presionado ▶ en la barra de
   reproducción, o Enter/espacio con teclado físico ("," y "." = fotograma anterior / siguiente). Reproduce en la
   mesa y en la línea de tiempo, con sonido, sin abrir la vista previa (`playHere`: `startPlay` + `moPlay`). Se

@@ -364,7 +364,37 @@ public final class MotionActivity extends Activity
         root.setBackgroundColor(Ui.WORK);
         stage = new StageView(this, this);
         root.addView(stage, new FrameLayout.LayoutParams(-1, -1));
+        addStageBar(root);
         setContentView(root);
+    }
+
+    /**
+     * Botonera chica sobre la mesa (a la derecha): deshacer, rehacer, probar aquí, copiar y pegar fotogramas.
+     * Así esas acciones están a mano mientras se dibuja, y la barra del principal no se llena.
+     */
+    private void addStageBar(FrameLayout box) {
+        LinearLayout b = new LinearLayout(this);
+        b.setOrientation(LinearLayout.VERTICAL);
+        b.setGravity(Gravity.CENTER_HORIZONTAL);
+        b.setPadding(dp(4), dp(4), dp(4), dp(4));
+        Ui.panel(b, Ui.glass(this));
+        int s = isSolo() ? dp(34) : dp(42);
+        String[][] items = {
+                {"↶", "Deshacer"}, {"↷", "Rehacer"},
+                {"⏯", "Probar aquí: reproduce en la mesa con sonido; toca otra vez para parar"},
+                {"⧉", "Copiar el fotograma elegido (para varios: mantén presionado un fotograma en la línea de tiempo)"},
+                {"📋", "Pegar fotogramas en el fotograma elegido"}};
+        Runnable[] acts = {
+                () -> request(op("undo")), () -> request(op("redo")), this::playHere,
+                () -> copyFrames(st.layer, st.frame, 1), () -> pasteFrames(st.layer, st.frame)};
+        for (int i = 0; i < items.length; i++) {
+            TextView t = Ui.sym(this, items[i][0], items[i][1], acts[i]);
+            t.setTextSize(isSolo() ? 16 : 20);
+            b.addView(t, lpMargins(s, s, 0, i == 0 ? 0 : dp(4), 0, 0));
+        }
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-2, -2, Gravity.END | Gravity.CENTER_VERTICAL);
+        lp.rightMargin = dp(8);
+        box.addView(b, lp);
     }
 
     /** Principal y modo solo: herramientas | línea de tiempo (+ mesa en solo) | propiedades. */
@@ -435,6 +465,7 @@ public final class MotionActivity extends Activity
             FrameLayout sBox = new FrameLayout(this);
             Ui.panel(sBox, Ui.glass(this));
             sBox.addView(stage, new FrameLayout.LayoutParams(-1, -1));
+            addStageBar(sBox);
             LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, 0, 0.58f);
             slp.setMargins(0, dp(6), 0, 0);
             center.addView(sBox, slp);
@@ -524,6 +555,7 @@ public final class MotionActivity extends Activity
         FrameLayout sBox = new FrameLayout(this);
         Ui.panel(sBox, Ui.glass(this));
         sBox.addView(stage, new FrameLayout.LayoutParams(-1, -1));
+        addStageBar(sBox);
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, 0, 1);
         slp.setMargins(0, dp(6), 0, 0);
         col.addView(sBox, slp);
@@ -690,10 +722,18 @@ public final class MotionActivity extends Activity
         wide(addBtn(c, "F5 －", "Quitar fotograma (Mayús+F5)", () -> frameOp("delFrame", false)));
         addBtn(c, "⏯", "Probar aquí (Enter): reproduce en la mesa con sonido; toca otra vez para parar", this::playHere);
         addBtn(c, "↝", "Crear / quitar interpolación de movimiento", this::toggleTween);
-        addBtn(c, "⧉", "Copiar fotograma (mantén presionado un fotograma para copiar varios)", () -> copyFrames(st.layer, st.frame, 1));
-        addBtn(c, "📋", "Pegar fotogramas en el fotograma elegido", () -> pasteFrames(st.layer, st.frame));
         addBtn(c, "✂", "Cortar el sonido en el cabezal", this::cutClip);
         addBtn(c, "🖼", "Importar imagen", this::addImage);
+        // copiar y pegar fotogramas van en la mesa y en el menú del fotograma (mantener presionado)
+        if (!half()) { // acostado: todos a la vista, repartiendo el ancho (los anchos valen 1,5)
+            for (int i = 0; i < c.getChildCount(); i++) {
+                LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) c.getChildAt(i).getLayoutParams();
+                boolean w = lp.width >= dp(60);
+                lp.weight = w ? 1.5f : 1f;
+                if (w) ((TextView) c.getChildAt(i)).setTextSize(13);
+                lp.width = 0;
+            }
+        }
         return c;
     }
 
@@ -1422,6 +1462,10 @@ public final class MotionActivity extends Activity
             case "moCmd":
                 cmd(m.optString("c"));
                 break;
+            case "moClip": // se copiaron fotogramas en el otro teléfono
+                clip = m.optJSONObject("c");
+                refreshProps();
+                break;
         }
     }
 
@@ -1785,6 +1829,7 @@ public final class MotionActivity extends Activity
         JSONObject c = MDoc.copyFrames(lay(layer), frame, n);
         if (c == null) { Ui.toast(this, "Ahí no hay fotogramas para copiar"); return; }
         clip = c;
+        if (!isSolo()) send("moClip", "c", c); // el mismo portapapeles en los dos teléfonos
         Ui.toast(this, "Copiado: " + clipName() + ". Elige dónde y toca Pegar");
         refreshProps();
     }
