@@ -221,6 +221,17 @@ public final class MotionActivity extends Activity
         ui.postDelayed(stageRetry, 2500);
     }
 
+    /** Botón "⇪ Mesa": trae la mesa al frente en el extendido aunque se haya quedado en el escritorio. */
+    private void bringStage() {
+        if (!connected) { Ui.toast(this, "Sin conexión con el extendido"); return; }
+        send("moShow", "force", true);
+        ui.removeCallbacks(stageRetry);
+        stageTries = 0;
+        stageShown = false;
+        ui.postDelayed(stageRetry, 2500);
+        Ui.toast(this, "Trayendo la mesa al frente…");
+    }
+
     private int stageTries;
     private final Runnable stageRetry = new Runnable() {
         @Override public void run() {
@@ -264,7 +275,30 @@ public final class MotionActivity extends Activity
         LinkService.detach(this);
     }
 
+    /** Teclado físico: Enter o espacio prueban aquí; "," y "." retroceden y avanzan un fotograma (como Flash). */
+    @Override public boolean dispatchKeyEvent(android.view.KeyEvent e) {
+        int k = e.getKeyCode();
+        boolean typing = getCurrentFocus() instanceof EditText;
+        if (!typing && role != null && e.getAction() == android.view.KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
+            switch (k) {
+                case android.view.KeyEvent.KEYCODE_ENTER:
+                case android.view.KeyEvent.KEYCODE_NUMPAD_ENTER:
+                case android.view.KeyEvent.KEYCODE_SPACE:
+                    if (previewOpen()) { if (playing) pausePreview(); else resumePreview(); } else playHere();
+                    return true;
+                case android.view.KeyEvent.KEYCODE_COMMA:
+                    if (!isEdit()) { select(st.layer, Math.max(0, st.frame - 1)); return true; }
+                    break;
+                case android.view.KeyEvent.KEYCODE_PERIOD:
+                    if (!isEdit()) { select(st.layer, st.frame + 1); return true; }
+                    break;
+            }
+        }
+        return super.dispatchKeyEvent(e);
+    }
+
     @Override public void onBackPressed() {
+        if (playing && !previewOpen() && !isEdit()) { stopHere(); return; }
         if (previewLayer != null && previewLayer.getVisibility() == View.VISIBLE) { closePreview(); return; }
         super.onBackPressed();
     }
@@ -368,6 +402,18 @@ public final class MotionActivity extends Activity
             else connectionDialog();
         });
         head.addView(connLabel);
+        if (isView()) {
+            TextView front = Ui.label(this, "⇪ Mesa", 13, 0xFFFFFFFF);
+            front.setGravity(Gravity.CENTER);
+            front.setPadding(dp(8), 0, dp(8), 0);
+            GradientDrawable fb = new GradientDrawable();
+            fb.setColor(0x33FFFFFF);
+            fb.setStroke(dp(1), 0x66FFFFFF);
+            fb.setCornerRadius(dp(8));
+            front.setBackground(fb);
+            front.setOnClickListener(v -> bringStage());
+            head.addView(front, lpMargins(-2, dp(30), dp(8), 0, 0, 0));
+        }
         head.addView(new Ui.AeroClose(this, this::askQuit), lpMargins(dp(34), dp(34), dp(8), 0, 0, 0));
         center.addView(head);
 
@@ -642,6 +688,7 @@ public final class MotionActivity extends Activity
         wide(addBtn(c, "F5 ＋", "Insertar fotograma (F5): alarga el tramo; más allá del final, extiende la capa hasta ahí",
                 () -> frameOp("frame", false)));
         wide(addBtn(c, "F5 －", "Quitar fotograma (Mayús+F5)", () -> frameOp("delFrame", false)));
+        addBtn(c, "⏯", "Probar aquí (Enter): reproduce en la mesa con sonido; toca otra vez para parar", this::playHere);
         addBtn(c, "↝", "Crear / quitar interpolación de movimiento", this::toggleTween);
         addBtn(c, "⧉", "Copiar fotograma (mantén presionado un fotograma para copiar varios)", () -> copyFrames(st.layer, st.frame, 1));
         addBtn(c, "📋", "Pegar fotogramas en el fotograma elegido", () -> pasteFrames(st.layer, st.frame));
@@ -663,7 +710,32 @@ public final class MotionActivity extends Activity
     // ================================================================ PlayerBar.Host
     private PlayerBar player;
 
-    @Override public void play() { openPreview(); }
+    @Override public void play() {
+        if (playing && !previewOpen()) { stopHere(); return; }
+        openPreview();
+    }
+
+    private boolean previewOpen() { return previewLayer != null && previewLayer.getVisibility() == View.VISIBLE; }
+
+    /**
+     * Probar aquí (Enter en Flash): reproduce en la mesa y en la línea de tiempo, con sonido, sin abrir la vista
+     * previa. Otra vez (o tocar la línea de tiempo) lo detiene y el cabezal queda donde iba.
+     */
+    @Override public void playHere() {
+        if (isEdit()) { send("moCmd", "c", "playHere"); return; }
+        if (playing) { if (previewOpen()) pausePreview(); else stopHere(); return; }
+        int at = st.inSymbol() ? st.pf : st.frame;
+        int from = at >= doc.length() - 1 ? 0 : at;
+        startPlay(from);
+        sendPlay(true, from);
+        refreshAll();
+    }
+
+    private void stopHere() {
+        stopPlay(true);
+        sendPlay(false, st.frame);
+        stateChanged(null);
+    }
     @Override public boolean loop() { return loop; }
     @Override public void toggleLoop() { loop = !loop; refreshAll(); refreshPreviewBar(); }
     @Override public void toggleOnion() { st.onion = !st.onion; stateChanged(null); }
@@ -1051,6 +1123,14 @@ public final class MotionActivity extends Activity
     private long pt0, lastTick;
 
     private final Sounds.Player audio = new Sounds.Player();
+    private final Sounds.Scrub scrubber = new Sounds.Scrub();
+
+    /** Al mover la aguja suena ese fotograma (lo que dura uno, entre 60 y 150 ms). */
+    private void scrub(int f) {
+        if (isEdit() || st.inSymbol() || !doc.hasAudio() || !prefs.getBoolean("scrub", true)) return;
+        int dur = Math.max(60, Math.min(150, 1000 / Math.max(1, doc.fps)));
+        scrubber.play(Sounds.plan(this, doc, false), (long) f * 1000 / doc.fps, dur);
+    }
 
     private final Choreographer.FrameCallback tick = new Choreographer.FrameCallback() {
         @Override public void doFrame(long now) {
@@ -1218,8 +1298,9 @@ public final class MotionActivity extends Activity
                 case "loop2": stage.setInstLoop(2, -1); break;
                 case "breakSym": stage.breakApart(); break;
             }
-            return;
+            if (!"playHere".equals(c)) return;
         }
+        if ("playHere".equals(c)) { if (!isEdit()) playHere(); return; }
         if (!connected) { Ui.toast(this, "Sin conexión con el extendido"); return; }
         send("moCmd", "c", c);
     }
@@ -1631,9 +1712,14 @@ public final class MotionActivity extends Activity
 
     // ================================================================ TimelineView.Host
     @Override public void select(int layer, int frame) {
-        if (playing) return;
+        if (playing) {
+            if (previewOpen() || isEdit()) return;
+            stopHere(); // tocar la línea de tiempo mientras se prueba: se detiene (como en Flash)
+        }
         st.layer = Math.max(0, Math.min(layer, T().size() - 1));
+        int old = st.frame;
         st.frame = Math.max(0, frame);
+        if (st.frame != old) scrub(st.frame);
         if (tl != null) tl.ensureVisible(st.frame);
         stateChanged(null);
     }
@@ -1784,7 +1870,8 @@ public final class MotionActivity extends Activity
         String[] items = {"Guardar", "Guardar como…", "Abrir…", "Nuevo documento", "Conexión",
                 "Cambiar el papel de este teléfono", "Buscar actualización", "Permisos para la mesa",
                 "Exportar video (MP4)", "Agregar sonido…", "Cerrar DUAL Motion", "Acerca de DUAL Motion",
-                "Importar imagen…"};
+                "Importar imagen…", "Traer la mesa al frente",
+                "Sonido al mover la aguja: " + (prefs.getBoolean("scrub", true) ? "sí ✓" : "no")};
         new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
                 .setItems(items, (d, w) -> {
                     switch (w) {
@@ -1814,6 +1901,13 @@ public final class MotionActivity extends Activity
                         case 10: askQuit(); break;
                         case 11: about(); break;
                         case 12: addImage(); break;
+                        case 13: if (isView()) bringStage(); else Ui.toast(this, "Se usa desde el principal"); break;
+                        case 14: {
+                            boolean on = !prefs.getBoolean("scrub", true);
+                            prefs.edit().putBoolean("scrub", on).apply();
+                            Ui.toast(this, on ? "Al mover la aguja vas a oír el sonido" : "La aguja se mueve en silencio");
+                            break;
+                        }
                     }
                 }).show();
     }

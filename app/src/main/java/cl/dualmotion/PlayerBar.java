@@ -27,6 +27,8 @@ public final class PlayerBar extends View {
         boolean loop();
         void select(int layer, int frame);
         void play();
+        /** Mantener presionado ▶: reproducir ahí mismo, en la mesa (como Enter en Flash). */
+        void playHere();
         void toggleLoop();
         void toggleOnion();
         void fpsMenu();
@@ -42,7 +44,15 @@ public final class PlayerBar extends View {
     private final RectF[] btn = new RectF[8];
     private final RectF track = new RectF(), r = new RectF();
     private int pressed = -1;
-    private boolean seeking;
+    private boolean seeking, longDone;
+    private final Runnable longPlay = () -> {
+        if (pressed != B_PLAY) return;
+        longDone = true;
+        pressed = -1;
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+        PlayerBar.this.host.playHere();
+        invalidate();
+    };
 
     public PlayerBar(Context c, Host h) {
         super(c);
@@ -244,13 +254,19 @@ public final class PlayerBar extends View {
                     seeking = true;
                     getParent().requestDisallowInterceptTouchEvent(true);
                     seekTo(x);
-                } else pressed = hit(x, y);
+                } else {
+                    pressed = hit(x, y);
+                    longDone = false;
+                    if (pressed == B_PLAY && !host.playing()) postDelayed(longPlay, 450);
+                }
                 invalidate();
                 return true;
             case MotionEvent.ACTION_MOVE:
                 if (seeking) seekTo(x);
                 return true;
             case MotionEvent.ACTION_UP: {
+                removeCallbacks(longPlay);
+                if (longDone) { longDone = false; return true; }
                 int b = pressed;
                 pressed = -1;
                 boolean was = seeking;
@@ -273,6 +289,7 @@ public final class PlayerBar extends View {
                 return true;
             }
             case MotionEvent.ACTION_CANCEL:
+                removeCallbacks(longPlay);
                 pressed = -1;
                 seeking = false;
                 invalidate();

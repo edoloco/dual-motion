@@ -381,6 +381,70 @@ final class Sounds {
 
     // ---------------------------------------------------------------- reproducción
     /** Reproduce la mezcla en un hilo; la imagen se guía por lo que realmente ya sonó (positionMs). */
+    /**
+     * Sonido al pasar la aguja (como Flash con sonidos "Flujo"): cada vez que el cabezal cambia de fotograma suena
+     * un trocito de la mezcla en ese punto. Si se arrastra rápido, se salta a lo último pedido (no se encola).
+     */
+    static final class Scrub {
+        private final Object lock = new Object();
+        private Plan plan;
+        private long reqAt = -1;
+        private int reqLen;
+        private long lastReq;
+        private Thread th;
+
+        void play(Plan p, long atMs, int durMs) {
+            if (p == null || p.isEmpty()) return;
+            synchronized (lock) {
+                plan = p;
+                reqAt = atMs * RATE / 1000;
+                reqLen = Math.max(256, durMs * RATE / 1000);
+                lastReq = System.currentTimeMillis();
+                if (th == null) {
+                    th = new Thread(this::loop, "dm-scrub");
+                    th.start();
+                }
+                lock.notifyAll();
+            }
+        }
+
+        private void loop() {
+            AudioTrack t = null;
+            try {
+                int min = AudioTrack.getMinBufferSize(RATE, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT);
+                t = new AudioTrack(AudioManager.STREAM_MUSIC, RATE, AudioFormat.CHANNEL_OUT_STEREO,
+                        AudioFormat.ENCODING_PCM_16BIT, Math.max(min, 4096), AudioTrack.MODE_STREAM);
+                t.play();
+                while (true) {
+                    Plan p; long at; int n;
+                    synchronized (lock) {
+                        while (reqAt < 0) {
+                            long idle = System.currentTimeMillis() - lastReq;
+                            if (idle > 2500) { th = null; return; }
+                            try { lock.wait(500); } catch (InterruptedException e) { th = null; return; }
+                        }
+                        p = plan; at = reqAt; n = reqLen;
+                        reqAt = -1;
+                    }
+                    short[] buf = new short[n * 2];
+                    mix(p, at, buf, n);
+                    int fade = Math.min(n / 4, RATE / 200); // 5 ms de entrada y salida: sin chasquidos
+                    for (int i = 0; i < fade; i++) {
+                        float g = i / (float) fade;
+                        buf[i * 2] = (short) (buf[i * 2] * g); buf[i * 2 + 1] = (short) (buf[i * 2 + 1] * g);
+                        int j = n - 1 - i;
+                        buf[j * 2] = (short) (buf[j * 2] * g); buf[j * 2 + 1] = (short) (buf[j * 2 + 1] * g);
+                    }
+                    if (t.write(buf, 0, n * 2) < 0) break;
+                }
+            } catch (Exception ignored) {
+            } finally {
+                synchronized (lock) { if (th == Thread.currentThread()) th = null; }
+                if (t != null) { try { t.stop(); } catch (Exception ignored) { } t.release(); }
+            }
+        }
+    }
+
     static final class Player {
         private volatile boolean run;
         private AudioTrack track;

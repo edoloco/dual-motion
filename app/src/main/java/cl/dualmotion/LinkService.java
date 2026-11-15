@@ -113,7 +113,7 @@ public final class LinkService extends Service implements Net.Listener {
     @Override public void onMessage(JSONObject m) {
         String t = m.optString("t");
         switch (t) {
-            case "moShow": if (MotionActivity.EDIT.equals(role)) showStage(); return;
+            case "moShow": if (MotionActivity.EDIT.equals(role)) showStage(m.optBoolean("force")); return;
             case "moUpdate": Updater.fromRemote(this); return;
             case "moSnd": Sounds.onChunk(this, m); return;
             case "moQuit": if (client == null) { stopSelf(); return; } break; // sin pantalla abierta: solo se apaga
@@ -132,11 +132,23 @@ public final class LinkService extends Service implements Net.Listener {
      * Extendido: trae la mesa al frente. Se intenta siempre (en Xiaomi puede bloquearse en silencio aunque haya
      * permiso); si al rato no apareció, sale un aviso que se abre a pantalla completa (o se toca).
      */
-    private void showStage() {
-        if (MotionActivity.visible) return;
+    private void showStage(boolean force) {
+        if (MotionActivity.visible && !force) return;
         final Intent i = new Intent(this, MotionActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        try { startActivity(i); } catch (Exception ignored) { }
+        // con "Mostrar sobre otras apps", una ventanita de un instante deja a Android abrir la mesa desde atrás
+        // (si no, se queda en el escritorio, por ejemplo en ChronOS)
+        if (Settings.canDrawOverlays(this)) {
+            ui.post(() -> {
+                blip(this);
+                ui.postDelayed(() -> { try { startActivity(i); } catch (Exception ignored) { } }, 150);
+            });
+        } else try { startActivity(i); } catch (Exception ignored) { }
+        if (force) {
+            try { // otra vez al rato: algunos escritorios se vuelven a poner delante
+                main.postDelayed(() -> { if (!MotionActivity.visible) try { startActivity(i); } catch (Exception ignored) { } }, 700);
+            } catch (Exception ignored) { }
+        }
         main.postDelayed(() -> { if (!MotionActivity.visible) stageNotice(i); }, 1500);
     }
 

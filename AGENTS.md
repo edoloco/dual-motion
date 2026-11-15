@@ -186,6 +186,18 @@ en los dos teléfonos.
   naranjo muestra dónde queda. Orden `moveKey {l,f,to}` (si ahí había un clave, lo reemplaza; mover el primero
   deja fotogramas vacíos antes). La barra de abajo lleva las teclas de Flash: "● F6", "○ F7", "F5 ＋" (insertar,
   o extender la capa hasta el cabezal si está más allá del final), "F5 －" (quitar).
+- Probar aquí (Enter de Flash): botón ⏯ en la barra de fotogramas, mantener presionado ▶ en la barra de
+  reproducción, o Enter/espacio con teclado físico ("," y "." = fotograma anterior / siguiente). Reproduce en la
+  mesa y en la línea de tiempo, con sonido, sin abrir la vista previa (`playHere`: `startPlay` + `moPlay`). Se
+  detiene con ⏯/▶ otra vez, Atrás o tocando la línea de tiempo; el cabezal queda donde iba. Desde el extendido va
+  como `moCmd c:"playHere"` al principal (el sonido suena allá).
+- Sonido al pasar la aguja (como sonidos "Flujo" de Flash): `select()` llama a `scrub(f)`, que hace sonar con
+  `Sounds.Scrub` un trocito de la mezcla (lo que dura un fotograma, 60–150 ms, con 5 ms de fundido). Un solo
+  AudioTrack que se suelta a los 2,5 s sin uso; si se arrastra rápido salta a lo último. No dentro de símbolos ni
+  en el extendido. Se apaga en ☰ › "Sonido al mover la aguja" (pref `scrub`).
+- "⇪ Mesa" en el encabezado del principal (y ☰ › "Traer la mesa al frente"): `moShow {force:true}`; el servicio
+  del extendido abre la mesa aunque crea que ya está visible, usando la ventanita de "Mostrar sobre otras apps"
+  para que Android la deje salir desde atrás (p. ej. cuando quedó el escritorio de ChronOS delante), y reintenta.
 - Copiar / pegar fotogramas (como Flash): menú del fotograma "Copiar fotograma", "Copiar varios fotogramas desde
   aquí…" (pregunta cuántos) y "Pegar …"; en la barra ⧉ (copiar el elegido) y 📋 (pegar en el elegido). El
   portapapeles vive en la principal (`MotionActivity.clip`, `{n, keys:[{o,k}]}` de `MDoc.copyFrames`): el primer
