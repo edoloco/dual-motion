@@ -192,6 +192,15 @@ en los dos teléfonos.
   La barra de fotogramas del principal (F6, F7, F5＋, F5－, ⏯, ↝, ✂, 🖼) reparte el ancho con pesos para que todo
   quede a la vista (en el modo solo va con desplazamiento). El portapapeles de fotogramas se comparte: al copiar se
   manda `moClip {c}` al otro teléfono.
+- Agregar sonido (`importSound` → `placeSound`): pregunta si empieza en el cabezal o en el fotograma 1 (música de
+  fondo). Nunca encima de otro sonido: si la capa de sonido elegida tiene ese tramo libre va ahí; si no, crea una
+  capa de sonido nueva con el nombre del sonido, que queda elegida. Avisa si dura más que la animación. No dentro
+  de símbolos (el audio es de la escena).
+- Volumen: cada trozo (`Clip.vol`) y cada capa de sonido (`Layer.vol`, JSON "v", orden `layer {vol}`), de 0 a
+  200 %; la mezcla usa el producto. En propiedades, "♪ Nivel de audio" aparece al elegir una capa de sonido
+  (barra de la capa y del trozo tocado); también en el menú de la capa y del trozo.
+- Cortar sonido: corta al comienzo del fotograma del cabezal, marcado con una línea punteada roja y ✂ sobre el
+  trozo. Mantener presionado un trozo lleva el cabezal al dedo antes de abrir su menú ("Cortar en el cabezal").
 - Probar aquí (Enter de Flash): botón ⏯ en la barra de fotogramas, mantener presionado ▶ en la barra de
   reproducción, o Enter/espacio con teclado físico ("," y "." = fotograma anterior / siguiente). Reproduce en la
   mesa y en la línea de tiempo, con sonido, sin abrir la vista previa (`playHere`: `startPlay` + `moPlay`). Se

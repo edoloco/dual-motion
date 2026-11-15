@@ -863,6 +863,7 @@ public final class MotionActivity extends Activity
         };
         mini.setOnClickListener(v -> openPreview());
         col.addView(mini, new LinearLayout.LayoutParams(-1, dp(104)));
+        col.addView(buildSoundBox());
 
         selLabel = Ui.label(this, "", 12, 0xFF555555);
         selLabel.setPadding(0, dp(4), 0, dp(6));
@@ -1492,6 +1493,7 @@ public final class MotionActivity extends Activity
     // ================================================================ sonido
     @Override public void addSound() {
         if (isView() && !connected) { Ui.toast(this, "Sin conexión con el extendido"); return; }
+        if (st.inSymbol()) { Ui.toast(this, "El sonido va en la escena: sal del símbolo primero"); return; }
         Files.pickAudio(this);
     }
 
@@ -1502,17 +1504,45 @@ public final class MotionActivity extends Activity
             if (snd == null) { Ui.toast(this, "No se pudo cargar el sonido: " + err); return; }
             if (isView()) Sounds.sendFile(this, snd.id, snd.ext); // el archivo viaja antes que las órdenes
             request(op("sndAdd", "id", snd.id, "name", snd.name, "ext", snd.ext, "dur", snd.dur));
-            MDoc.Layer L = lay(st.layer);
-            int l = st.layer;
-            if (L == null || !L.audio) request(op("layerAdd", "at", l, "audio", 1)); // capa de sonido nueva arriba de la actual
-            MDoc.Clip c = new MDoc.Clip();
-            c.s = snd.id;
-            c.at = (int) ((long) st.frame * 1000 / doc.fps);
-            c.in = 0;
-            c.len = Math.max(1, snd.dur);
-            try { request(op("clipAdd", "l", l, "c", c.toJson())); } catch (JSONException ignored) { }
-            Ui.toast(this, "Sonido agregado: " + snd.name);
+            if (st.frame == 0) { placeSound(snd, 0); return; }
+            String[] items = {"En el cabezal (fotograma " + (st.frame + 1) + ")", "Al comienzo (fotograma 1) · música de fondo"};
+            new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                    .setTitle("¿Dónde empieza \"" + snd.name + "\"?")
+                    .setItems(items, (d, w) -> placeSound(snd, w == 0 ? st.frame : 0))
+                    .setOnCancelListener(d -> placeSound(snd, st.frame))
+                    .show();
         });
+    }
+
+    /**
+     * Pone el sonido desde el fotograma f. Nunca encima de otro: si la capa de sonido elegida tiene ese tramo libre
+     * va ahí; si no, en una capa de sonido nueva (con el nombre del sonido) arriba de la actual, que queda elegida.
+     */
+    private void placeSound(MDoc.Sound snd, int f) {
+        if (st.inSymbol()) { Ui.toast(this, "El sonido va en la escena: sal del símbolo y agrégalo de nuevo"); return; }
+        MDoc.Clip c = new MDoc.Clip();
+        c.s = snd.id;
+        c.at = (int) ((long) f * 1000 / doc.fps);
+        c.in = 0;
+        c.len = Math.max(1, snd.dur);
+        int l = Math.max(0, Math.min(st.layer, doc.layers.size() - 1));
+        MDoc.Layer L = lay(l);
+        boolean free = L != null && L.audio;
+        if (free) for (MDoc.Clip k : L.clips) if (c.at < k.end() && k.at < c.end()) { free = false; break; }
+        if (!free) {
+            request(op("layerAdd", "at", l, "audio", 1));
+            request(op("layer", "l", l, "name", snd.name));
+        }
+        try { request(op("clipAdd", "l", l, "c", c.toJson())); } catch (JSONException ignored) { }
+        st.layer = l;
+        st.frame = f;
+        if (tl != null) { tl.clearClipSel(); tl.ensureVisible(f); }
+        stateChanged(null);
+        int anim = doc.durationMs();
+        if (c.end() > anim + 500)
+            Ui.toast(this, String.format(Locale.US, "Sonido agregado: %s. Dura %.1f s y la animación termina en %.1f s: "
+                    + "alarga los fotogramas (F5) para oírlo completo", snd.name, c.end() / 1000f, anim / 1000f));
+        else Ui.toast(this, "Sonido agregado: " + snd.name);
     }
 
     // ================================================================ imagen (siempre se elige en el principal)
@@ -1871,8 +1901,12 @@ public final class MotionActivity extends Activity
         final MDoc.Layer L = lay(layer);
         if (L == null) return;
         select(layer, st.frame);
-        String[] items = {"Renombrar", "Eliminar capa", "Insertar capa encima", "Subir", "Bajar",
-                L.vis ? "Ocultar" : "Mostrar", L.lock ? "Desbloquear" : "Bloquear"};
+        String[] items = L.audio
+                ? new String[]{"Renombrar", "Eliminar capa", "Insertar capa encima", "Subir", "Bajar",
+                        L.vis ? "Silenciar (ocultar)" : "Volver a oír (mostrar)", L.lock ? "Desbloquear" : "Bloquear",
+                        "Volumen de la capa… (" + Math.round(L.vol * 100) + " %)"}
+                : new String[]{"Renombrar", "Eliminar capa", "Insertar capa encima", "Subir", "Bajar",
+                        L.vis ? "Ocultar" : "Mostrar", L.lock ? "Desbloquear" : "Bloquear"};
         new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
                 .setTitle((L.audio ? "♪ " : "") + L.name)
                 .setItems(items, (d, w) -> {
@@ -1888,9 +1922,110 @@ public final class MotionActivity extends Activity
                         case 4: if (layer < T().size() - 1) { request(op("layerMove", "l", layer, "to", layer + 1)); select(layer + 1, st.frame); } break;
                         case 5: toggle(layer, "vis"); break;
                         case 6: toggle(layer, "lock"); break;
+                        case 7: layerVolumeDialog(layer); break;
                     }
                 }).show();
     }
+
+    private void layerVolumeDialog(final int layer) {
+        final MDoc.Layer L = lay(layer);
+        if (L == null || !L.audio) return;
+        final SeekBar sb = new SeekBar(this);
+        sb.setMax(200);
+        sb.setProgress(Math.round(L.vol * 100));
+        final TextView lab = Ui.label(this, Math.round(L.vol * 100) + " %", 15, Ui.INK);
+        lab.setGravity(Gravity.CENTER);
+        sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int v, boolean u) { lab.setText(v + " %"); }
+            @Override public void onStartTrackingTouch(SeekBar s) { }
+            @Override public void onStopTrackingTouch(SeekBar s) { }
+        });
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(10), dp(20), 0);
+        box.addView(lab);
+        box.addView(sb);
+        new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                .setTitle("Volumen de la capa \"" + L.name + "\"").setView(box)
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Listo", (d, w) -> request(op("layer", "l", layer, "vol", sb.getProgress() / 100.0)))
+                .show();
+    }
+
+    // ================================================================ panel de sonido (propiedades)
+    private LinearLayout soundBox;
+    private TextView sndLayerL, sndClipL;
+    private SeekBar sndLayerBar, sndClipBar;
+    private LinearLayout sndClipRow;
+
+    /** Volumen de la capa de sonido elegida y del trozo elegido (0 a 200 %), a la vista en propiedades. */
+    private View buildSoundBox() {
+        soundBox = new LinearLayout(this);
+        soundBox.setOrientation(LinearLayout.VERTICAL);
+        soundBox.setPadding(0, dp(6), 0, dp(4));
+        TextView t = Ui.label(this, "♪ Nivel de audio", 13, 0xFF1565C0);
+        t.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        soundBox.addView(t);
+        sndLayerL = Ui.label(this, "", 12, 0xFF555555);
+        sndLayerL.setPadding(0, dp(6), 0, 0);
+        soundBox.addView(sndLayerL);
+        sndLayerBar = volBar(sndLayerL, "Capa", true);
+        soundBox.addView(sndLayerBar);
+        sndClipRow = new LinearLayout(this);
+        sndClipRow.setOrientation(LinearLayout.VERTICAL);
+        sndClipL = Ui.label(this, "", 12, 0xFF555555);
+        sndClipL.setPadding(0, dp(6), 0, 0);
+        sndClipRow.addView(sndClipL);
+        sndClipBar = volBar(sndClipL, "Trozo elegido", false);
+        sndClipRow.addView(sndClipBar);
+        soundBox.addView(sndClipRow);
+        TextView hint = Ui.label(this, "Toca un trozo de sonido para su volumen · 100 % = original", 11, 0xFF777777);
+        hint.setPadding(0, dp(4), 0, 0);
+        soundBox.addView(hint);
+        return soundBox;
+    }
+
+    private SeekBar volBar(final TextView label, final String what, final boolean layerVol) {
+        SeekBar sb = new SeekBar(this);
+        sb.setMax(200);
+        sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int v, boolean u) { if (u) label.setText(what + ": " + v + " %"); }
+            @Override public void onStartTrackingTouch(SeekBar s) { }
+            @Override public void onStopTrackingTouch(SeekBar s) {
+                double v = s.getProgress() / 100.0;
+                if (layerVol) request(op("layer", "l", st.layer, "vol", v));
+                else if (tl != null && tl.selClipL >= 0) {
+                    MDoc.Layer L = lay(tl.selClipL);
+                    if (L == null || tl.selClipI >= L.clips.size()) return;
+                    MDoc.Clip k = L.clips.get(tl.selClipI).copy();
+                    k.vol = (float) v;
+                    clipChange(tl.selClipL, tl.selClipI, k);
+                }
+            }
+        });
+        return sb;
+    }
+
+    private void refreshSoundBox() {
+        if (soundBox == null) return;
+        MDoc.Layer L = lay(st.layer);
+        boolean on = L != null && L.audio;
+        soundBox.setVisibility(on ? View.VISIBLE : View.GONE);
+        if (!on) return;
+        int lv = Math.round(L.vol * 100);
+        sndLayerL.setText("Capa \"" + L.name + "\": " + lv + " %");
+        if (!sndLayerBar.isPressed()) sndLayerBar.setProgress(lv);
+        MDoc.Layer CL = tl != null && tl.selClipL >= 0 ? lay(tl.selClipL) : null;
+        boolean clip = CL != null && CL.audio && tl.selClipI < CL.clips.size();
+        sndClipRow.setVisibility(clip ? View.VISIBLE : View.GONE);
+        if (clip) {
+            int cv = Math.round(CL.clips.get(tl.selClipI).vol * 100);
+            sndClipL.setText("Trozo elegido: " + cv + " %");
+            if (!sndClipBar.isPressed()) sndClipBar.setProgress(cv);
+        }
+    }
+
+    @Override public void clipSelected() { refreshSoundBox(); }
 
     private void rename(final int layer) {
         MDoc.Layer L = lay(layer);
@@ -2147,6 +2282,7 @@ public final class MotionActivity extends Activity
 
     private void refreshProps() {
         refreshKeyButtons();
+        refreshSoundBox();
         if (brushBox != null) {
             brushBox.setVisibility(st.tool == State.BRUSH ? View.VISIBLE : View.GONE);
             eraseBox.setVisibility(st.tool == State.ERASER ? View.VISIBLE : View.GONE);

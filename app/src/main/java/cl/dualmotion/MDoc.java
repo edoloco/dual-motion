@@ -401,6 +401,8 @@ public final class MDoc {
         /** Capa de audio: no tiene dibujo, sino trozos de sonido (puede tener varios). */
         public boolean audio;
         public final ArrayList<Clip> clips = new ArrayList<>();
+        /** Volumen de toda la capa de sonido (0 a 2; se multiplica por el de cada trozo). */
+        public float vol = 1;
         /** Fotogramas intermedios de interpolación ya calculados (ver between). */
         transient final java.util.HashMap<Integer, Key> cache = new java.util.HashMap<>();
         transient int cacheVer = -1;
@@ -411,6 +413,7 @@ public final class MDoc {
             o.put("color", color); o.put("len", len);
             if (audio) {
                 o.put("type", "audio");
+                if (vol != 1) o.put("v", Math.round(vol * 100) / 100.0);
                 JSONArray cs = new JSONArray();
                 for (Clip c : clips) cs.put(c.toJson());
                 o.put("clips", cs);
@@ -436,6 +439,7 @@ public final class MDoc {
             L.color = o.optInt("color", 0xFF2FA866);
             L.len = Math.max(1, o.optInt("len", 1));
             L.audio = "audio".equals(o.optString("type"));
+            L.vol = (float) Math.max(0, Math.min(2, o.optDouble("v", 1)));
             JSONArray cs = o.optJSONArray("clips");
             if (L.audio && cs != null) for (int i = 0; i < cs.length(); i++) {
                 JSONObject co = cs.optJSONObject(i);
@@ -811,6 +815,7 @@ public final class MDoc {
                 if (m.has("vis")) L.vis = m.optBoolean("vis");
                 if (m.has("lock")) L.lock = m.optBoolean("lock");
                 if (m.has("out")) L.out = m.optBoolean("out");
+                if (m.has("vol")) L.vol = (float) Math.max(0, Math.min(2, m.optDouble("vol", 1)));
                 return true;
             }
             case "key": { // F6 (copia la clave anterior) o F7 (blank = clave vacía)

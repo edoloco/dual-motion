@@ -36,6 +36,8 @@ public final class TimelineView extends View {
         void clipMenu(int layer, int index);
         /** Se arrastró un fotograma clave a otro fotograma. */
         void moveKey(int layer, int from, int to);
+        /** Cambió el trozo de sonido elegido (para mostrar su volumen). */
+        void clipSelected();
     }
 
     private final Host host;
@@ -314,7 +316,14 @@ public final class TimelineView extends View {
         performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
         int l = rowAt(downY);
         if (l < 0 || l >= host.layers().size()) return;
-        if (zone == 2 && dragI >= 0) { dragClip = null; host.clipMenu(dragL, dragI); invalidate(); return; }
+        if (zone == 2 && dragI >= 0) {
+            dragClip = null;
+            int f = frameAt(downX);
+            if (f >= 0) host.select(dragL, f); // el cabezal va donde está el dedo: "Cortar" corta ahí
+            host.clipMenu(dragL, dragI);
+            invalidate();
+            return;
+        }
         if (zone == 2) { int f = frameAt(downX); if (f >= 0) { host.select(l, f); host.frameMenu(l, f); } }
         else if (zone == 1) host.layerMenu(l);
     }
@@ -446,12 +455,28 @@ public final class TimelineView extends View {
         for (int i = 0; i < L.clips.size(); i++) {
             MDoc.Clip k = l == dragL && i == dragI && dragClip != null ? dragClip : L.clips.get(i);
             boolean sel = l == selClipL && i == selClipI;
-            drawClip(c, k, y, sel, L.vis);
+            drawClip(c, k, y, sel, L.vis, L.vol);
+        }
+        // dónde corta ✂: al comienzo del fotograma del cabezal (línea punteada sobre el sonido)
+        if (l == host.st().layer) {
+            int cur = host.st().frame;
+            long t = (long) cur * 1000 / host.doc().fps;
+            for (MDoc.Clip k : L.clips) if (t > k.at && t < k.end()) {
+                float x = msX(t);
+                p.setColor(0xFFD32F2F);
+                p.setStrokeWidth(1.5f * dp);
+                for (float yy = y + 3 * dp; yy < y + rowH - 3 * dp; yy += 6 * dp) c.drawLine(x, yy, x, Math.min(yy + 3 * dp, y + rowH - 3 * dp), p);
+                tp.setColor(0xFFD32F2F);
+                tp.setTextSize(11 * dp);
+                c.drawText("✂", x + 2 * dp, y + rowH - 6 * dp, tp);
+                tp.setTextSize(13 * dp);
+                break;
+            }
         }
         c.restore();
     }
 
-    private void drawClip(Canvas c, MDoc.Clip k, float y, boolean sel, boolean on) {
+    private void drawClip(Canvas c, MDoc.Clip k, float y, boolean sel, boolean on, float layerVol) {
         float x0 = msX(k.at), x1 = msX(k.end());
         if (x1 < nameW || x0 > getWidth()) return;
         r.set(x0, y + 3 * dp, x1, y + rowH - 3 * dp);
@@ -470,7 +495,7 @@ public final class TimelineView extends View {
                 int ms0 = k.in + (int) ((x - x0) / pxPerMs), ms1 = k.in + (int) ((x + step - x0) / pxPerMs);
                 float a = 0;
                 for (int j = ms0 / Sounds.PEAK_MS; j <= ms1 / Sounds.PEAK_MS && j < pk.length; j++) a = Math.max(a, pk[j]);
-                float hh = Math.max(dp * 0.5f, a * k.vol * half);
+                float hh = Math.max(dp * 0.5f, Math.min(1f, a * k.vol * layerVol) * half);
                 c.drawLine(x, mid - hh, x, mid + hh, p);
             }
         }
@@ -514,9 +539,10 @@ public final class TimelineView extends View {
             dragMode = x - x0 < edge ? 1 : x1 - x < edge ? 2 : 0;
             selClipL = l; selClipI = i;
             invalidate();
+            host.clipSelected();
             return;
         }
-        selClipL = selClipI = -1;
+        if (selClipL >= 0) { selClipL = selClipI = -1; host.clipSelected(); }
     }
 
     private void clipMove(float x) {
@@ -543,5 +569,5 @@ public final class TimelineView extends View {
     }
 
     /** Toque simple en una fila de sonido: también selecciona el trozo (lo hace clipDown). */
-    public void clearClipSel() { selClipL = selClipI = -1; invalidate(); }
+    public void clearClipSel() { selClipL = selClipI = -1; invalidate(); host.clipSelected(); }
 }

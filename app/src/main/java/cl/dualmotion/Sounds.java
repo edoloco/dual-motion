@@ -354,7 +354,7 @@ final class Sounds {
                 if (data == null) continue;
                 p.pcm.add(data);
                 p.pos.add(new long[]{(long) k.at * RATE / 1000, (long) k.in * RATE / 1000, (long) k.len * RATE / 1000});
-                p.vol.add(k.vol);
+                p.vol.add(k.vol * L.vol);
             }
         }
         return p;
