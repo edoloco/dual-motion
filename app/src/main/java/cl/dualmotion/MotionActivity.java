@@ -245,6 +245,7 @@ public final class MotionActivity extends Activity
         super.onStop();
         visible = false;
         if (role == null) return;
+        if (!isEdit()) saveFileNow(true); // a segundo plano: queda guardado en el archivo
         if (isEdit()) send("moVis", "on", false);
         // el principal se fue a segundo plano: la mesa se esconde (no si solo se abrió un selector o un permiso)
         else if (isView() && connected && !keepStage && !isChangingConfigurations()) send("moHide");
@@ -265,7 +266,7 @@ public final class MotionActivity extends Activity
     @Override protected void onPause() {
         super.onPause();
         if (role == null) return;
-        if (!isView()) { ui.removeCallbacks(saveR); writeAutosave(doc.toJson().toString()); }
+        if (!isView()) snapshot(false);
         if (!isEdit()) saveState();
     }
 
@@ -960,6 +961,8 @@ public final class MotionActivity extends Activity
         symBox.addView(breakSym, blp);
         col.addView(symBox);
 
+        buildFxBox(col);
+
         // ---- interpolación del clave actual
         TextView secT = Ui.label(this, "Interpolación", 12, 0xFF555555);
         secT.setPadding(0, dp(12), 0, dp(4));
@@ -1004,6 +1007,156 @@ public final class MotionActivity extends Activity
         col.addView(alphaBar);
 
         return sv;
+    }
+
+    // ================================================================ efectos: resplandor exterior y sombra
+    /** Efectos de lo elegido ({glow:{c,s,i}, shadow:{c,s,d,a}}), o null si no hay nada elegido. */
+    private JSONObject selFx;
+    private LinearLayout fxBox;
+    private TextView fxHint, glowBtn, shadBtn, glowSw, shadSw, glowSL, glowIL, shadSL, shadDL, shadAL;
+
+    private void buildFxBox(LinearLayout col) {
+        TextView t = Ui.label(this, "Efectos", 12, 0xFF555555);
+        t.setPadding(0, dp(12), 0, dp(4));
+        col.addView(t);
+        fxHint = Ui.label(this, "Elige algo con la flecha para ponerle resplandor o sombra", 11, 0xFF777777);
+        col.addView(fxHint);
+        fxBox = new LinearLayout(this);
+        fxBox.setOrientation(LinearLayout.VERTICAL);
+        // resplandor exterior
+        LinearLayout g = new LinearLayout(this);
+        g.setGravity(Gravity.CENTER_VERTICAL);
+        glowBtn = Ui.sym(this, "", "Resplandor exterior (como en Photoshop): un brillo difuso alrededor", () -> toggleFx(true));
+        glowBtn.setTextSize(12);
+        g.addView(glowBtn, new LinearLayout.LayoutParams(0, dp(36), 1));
+        glowSw = swatch(() -> fxColor(true));
+        g.addView(glowSw, lpMargins(dp(36), dp(36), dp(6), 0, 0, 0));
+        fxBox.addView(g);
+        glowSL = fxRow(fxBox, "Más chico", "Más grande", () -> fxStep("glow", "s", -2), () -> fxStep("glow", "s", 2));
+        glowIL = fxRow(fxBox, "Más suave", "Más fuerte", () -> fxStep("glow", "i", -0.25), () -> fxStep("glow", "i", 0.25));
+        // sombra paralela
+        LinearLayout h = new LinearLayout(this);
+        h.setGravity(Gravity.CENTER_VERTICAL);
+        h.setPadding(0, dp(8), 0, 0);
+        shadBtn = Ui.sym(this, "", "Sombra paralela (como en Photoshop): una sombra corrida y difusa", () -> toggleFx(false));
+        shadBtn.setTextSize(12);
+        h.addView(shadBtn, new LinearLayout.LayoutParams(0, dp(36), 1));
+        shadSw = swatch(() -> fxColor(false));
+        h.addView(shadSw, lpMargins(dp(36), dp(36), dp(6), 0, 0, 0));
+        fxBox.addView(h);
+        shadSL = fxRow(fxBox, "Más nítida", "Más difusa", () -> fxStep("shadow", "s", -2), () -> fxStep("shadow", "s", 2));
+        shadDL = fxRow(fxBox, "Más cerca", "Más lejos", () -> fxStep("shadow", "d", -2), () -> fxStep("shadow", "d", 2));
+        shadAL = fxRow(fxBox, "Girar la luz a la izquierda", "Girar la luz a la derecha",
+                () -> fxStep("shadow", "a", -15), () -> fxStep("shadow", "a", 15));
+        TextView tip = Ui.label(this, "El color también lleva la opacidad. Para un brillo parejo en un dibujo de varias "
+                + "partes, conviértelo en símbolo y ponle el efecto al símbolo. Se interpolan.", 11, 0xFF777777);
+        tip.setPadding(0, dp(4), 0, 0);
+        fxBox.addView(tip);
+        col.addView(fxBox);
+    }
+
+    private TextView swatch(Runnable r) {
+        TextView v = new TextView(this);
+        v.setOnClickListener(x -> r.run());
+        return v;
+    }
+
+    private TextView fxRow(LinearLayout box, String minus, String plus, Runnable dec, Runnable inc) {
+        LinearLayout r = new LinearLayout(this);
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(0, dp(4), 0, 0);
+        TextView l = Ui.label(this, "", 12, 0xFF555555);
+        r.addView(l, new LinearLayout.LayoutParams(0, -2, 1));
+        addBtn(r, "−", minus, dec);
+        addBtn(r, "+", plus, inc);
+        box.addView(r);
+        return l;
+    }
+
+    private JSONObject fxPart(boolean glow) {
+        if (selFx == null) selFx = new JSONObject();
+        JSONObject p = selFx.optJSONObject(glow ? "glow" : "shadow");
+        if (p == null) { p = new JSONObject(); try { selFx.put(glow ? "glow" : "shadow", p); } catch (JSONException ignored) { } }
+        return p;
+    }
+
+    /** Prender o apagar: al prender usa el último color (resplandor amarillo claro y sombra negra al 75 %, como Photoshop). */
+    private void toggleFx(boolean glow) {
+        if (selN == 0) { Ui.toast(this, "Elige algo con la flecha"); return; }
+        JSONObject p = fxPart(glow);
+        try {
+            if (p.optInt("c") != 0) p.put("c", 0);
+            else p.put("c", prefs.getInt(glow ? "fxGlowC" : "fxShadC", glow ? 0xBFFFFF8C : 0xBF000000));
+        } catch (JSONException ignored) { }
+        applyFx();
+    }
+
+    private void fxColor(final boolean glow) {
+        if (selN == 0) { Ui.toast(this, "Elige algo con la flecha"); return; }
+        int cur = fxPart(glow).optInt("c");
+        if (cur == 0) cur = prefs.getInt(glow ? "fxGlowC" : "fxShadC", glow ? 0xBFFFFF8C : 0xBF000000);
+        openMixer(cur, glow ? "Color del resplandor" : "Color de la sombra", c -> {
+            if ((c >>> 24) == 0) c |= 0xBF000000;
+            prefs.edit().putInt(glow ? "fxGlowC" : "fxShadC", c).apply();
+            try { fxPart(glow).put("c", c); } catch (JSONException ignored) { }
+            applyFx();
+        }, null);
+    }
+
+    private void fxStep(String part, String key, double d) {
+        if (selN == 0) { Ui.toast(this, "Elige algo con la flecha"); return; }
+        JSONObject p = fxPart("glow".equals(part));
+        double def = "glow".equals(part) ? ("s".equals(key) ? 10 : 1) : ("s".equals(key) ? 6 : "d".equals(key) ? 8 : 120);
+        try { p.put(key, p.optDouble(key, def) + d); } catch (JSONException ignored) { }
+        applyFx();
+    }
+
+    private void applyFx() {
+        JSONObject fx;
+        try { fx = new JSONObject(selFx.toString()); } catch (Exception e) { return; }
+        if (stage != null) stage.setFx(fx);
+        else if (!connected) { Ui.toast(this, "Sin conexión con el extendido"); return; }
+        else {
+            try {
+                JSONObject m = new JSONObject();
+                m.put("t", "moCmd"); m.put("c", "fx"); m.put("fx", fx);
+                sendRaw(m);
+            } catch (JSONException ignored) { }
+        }
+        refreshFx();
+    }
+
+    private void refreshFx() {
+        if (fxBox == null) return;
+        boolean on = selN > 0;
+        fxBox.setVisibility(on ? View.VISIBLE : View.GONE);
+        fxHint.setVisibility(on ? View.GONE : View.VISIBLE);
+        if (!on) return;
+        JSONObject g = fxPart(true), h = fxPart(false);
+        int gc = g.optInt("c"), hc = h.optInt("c");
+        glowBtn.setText(gc != 0 ? "☀  Resplandor exterior: sí" : "☀  Resplandor exterior: no");
+        glowBtn.setTextColor(gc != 0 ? Ui.ORANGE : Ui.INK);
+        shadBtn.setText(hc != 0 ? "▰  Sombra paralela: sí" : "▰  Sombra paralela: no");
+        shadBtn.setTextColor(hc != 0 ? Ui.ORANGE : Ui.INK);
+        paintSwatch(glowSw, gc != 0 ? gc : prefs.getInt("fxGlowC", 0xBFFFFF8C));
+        paintSwatch(shadSw, hc != 0 ? hc : prefs.getInt("fxShadC", 0xBF000000));
+        glowSL.setText("Tamaño " + Math.round(g.optDouble("s", 10)));
+        glowIL.setText("Intensidad " + Math.round(g.optDouble("i", 1) * 100) + " %");
+        shadSL.setText("Desenfoque " + Math.round(h.optDouble("s", 6)));
+        shadDL.setText("Distancia " + Math.round(h.optDouble("d", 8)));
+        shadAL.setText("Ángulo de la luz " + Math.round(h.optDouble("a", 120)) + "°");
+        float a = (gc != 0 ? 1f : 0.45f);
+        glowSL.setAlpha(a); glowIL.setAlpha(a);
+        float b = (hc != 0 ? 1f : 0.45f);
+        shadSL.setAlpha(b); shadDL.setAlpha(b); shadAL.setAlpha(b);
+    }
+
+    private void paintSwatch(TextView v, int c) {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(c);
+        d.setCornerRadius(dp(8));
+        d.setStroke(dp(1), 0x55000000);
+        v.setBackground(d);
     }
 
     private TextView toSymBtn, symName;
@@ -1279,11 +1432,12 @@ public final class MotionActivity extends Activity
                 sendRaw(m);
             } catch (JSONException ignored) { }
         }
-        scheduleSave();
+        journal(o);
         docChanged();
     }
 
     private void docChanged() {
+        markFileDirty();
         if (!doc.sounds.isEmpty()) { Sounds.need(this, doc); Sounds.warm(this, doc); }
         if (!doc.images.isEmpty()) Images.need(this, doc);
         clampState();
@@ -1418,6 +1572,8 @@ public final class MotionActivity extends Activity
                 selSym = m.optString("sym", "");
                 if (selSym.isEmpty()) selSym = null;
                 selLoop = m.optInt("lp");
+                selFx = m.optJSONObject("fx");
+                if (selFx != null && selFx.length() == 0) selFx = null;
                 refreshProps();
                 break;
             case "moEnter":
@@ -1461,6 +1617,7 @@ public final class MotionActivity extends Activity
                 }
                 break;
             case "moCmd":
+                if ("fx".equals(m.optString("c"))) { if (stage != null) stage.setFx(m.optJSONObject("fx")); break; }
                 cmd(m.optString("c"));
                 break;
             case "moClip": // se copiaron fotogramas en el otro teléfono
@@ -1736,12 +1893,14 @@ public final class MotionActivity extends Activity
         refreshProps();
     }
 
-    @Override public void selChanged(int n, MDoc.Shape inst) {
+    @Override public void selChanged(int n, MDoc.Shape inst, MDoc.Shape first) {
         selN = n;
         MDoc.Symbol Y = inst == null ? null : doc.symbol(inst.sym);
         selSym = Y == null ? null : Y.name;
         selLoop = inst == null ? 0 : inst.loop;
-        if (isEdit()) send("moSel", "n", n, "sym", selSym == null ? "" : selSym, "lp", selLoop);
+        selFx = first == null ? null : first.fxJson();
+        if (isEdit()) send("moSel", "n", n, "sym", selSym == null ? "" : selSym, "lp", selLoop,
+                "fx", selFx == null ? new JSONObject() : selFx);
         else refreshProps();
     }
 
@@ -2051,7 +2210,8 @@ public final class MotionActivity extends Activity
                 "Cambiar el papel de este teléfono", "Buscar actualización", "Permisos para la mesa",
                 "Exportar video (MP4)", "Agregar sonido…", "Cerrar DUAL Motion", "Acerca de DUAL Motion",
                 "Importar imagen…", "Traer la mesa al frente",
-                "Sonido al mover la aguja: " + (prefs.getBoolean("scrub", true) ? "sí ✓" : "no")};
+                "Sonido al mover la aguja: " + (prefs.getBoolean("scrub", true) ? "sí ✓" : "no"),
+                "Guardar solo en el archivo .dmo: " + (autoFile() ? "sí ✓" : "no")};
         new AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
                 .setItems(items, (d, w) -> {
                     switch (w) {
@@ -2088,6 +2248,15 @@ public final class MotionActivity extends Activity
                             Ui.toast(this, on ? "Al mover la aguja vas a oír el sonido" : "La aguja se mueve en silencio");
                             break;
                         }
+                        case 15: {
+                            boolean on = !autoFile();
+                            prefs.edit().putBoolean("autoFile", on).apply();
+                            if (on && prefs.getString("docUri", null) == null)
+                                Ui.toast(this, "Guárdalo una vez (☰ › Guardar como…) y desde ahí se guarda solo");
+                            else Ui.toast(this, on ? "Cada cambio se guarda solo en el archivo" : "El archivo se guarda solo cuando tú lo pides");
+                            if (on) markFileDirty();
+                            break;
+                        }
                     }
                 }).show();
     }
@@ -2105,7 +2274,8 @@ public final class MotionActivity extends Activity
     /** Guarda, avisa al otro teléfono (tell) y cierra la pantalla y la conexión. */
     void quit(boolean tell) {
         stopPlay(false);
-        if (role != null && !isView()) { ui.removeCallbacks(saveR); writeAutosave(doc.toJson().toString()); }
+        if (role != null && !isView()) snapshot(true);
+        if (role != null) saveFileNow(true);
         if (tell && !isSolo()) send("moQuit");
         LinkService.detach(this);
         if (!isSolo()) ui.postDelayed(() -> LinkService.stop(getApplicationContext()), tell ? 600 : 0);
@@ -2283,6 +2453,7 @@ public final class MotionActivity extends Activity
     private void refreshProps() {
         refreshKeyButtons();
         refreshSoundBox();
+        refreshFx();
         if (brushBox != null) {
             brushBox.setVisibility(st.tool == State.BRUSH ? View.VISIBLE : View.GONE);
             eraseBox.setVisibility(st.tool == State.ERASER ? View.VISIBLE : View.GONE);
@@ -2295,11 +2466,7 @@ public final class MotionActivity extends Activity
             gapL.setText("Huecos " + st.gap + " px");
             allL.setText(st.fillAll ? "Mira: todas las capas" : "Mira: solo esta capa");
         }
-        if (docLabel != null) {
-            MDoc.Symbol Y = st.inSymbol() ? doc.symbol(st.sym) : null;
-            docLabel.setText(Y != null ? "🎬 " + doc.scene + "  ›  ◈ " + Y.name + "   ↩"
-                    : "🎬 " + doc.scene + "  ·  " + prefs.getString("docName", "Sin guardar"));
-        }
+        refreshDocLabel();
         if (symBox != null) {
             symBox.setVisibility(selSym != null ? View.VISIBLE : View.GONE);
             toSymBtn.setVisibility(selSym == null ? View.VISIBLE : View.GONE);
@@ -2347,19 +2514,85 @@ public final class MotionActivity extends Activity
     }
 
     // ================================================================ guardar
-    private final Runnable saveR = () -> {
-        final String json = doc.toJson().toString();
-        new Thread(() -> writeAutosave(json)).start();
-    };
-
-    private void scheduleSave() {
-        ui.removeCallbacks(saveR);
-        ui.postDelayed(saveR, 1500);
-    }
+    /*
+     * Cada cambio queda grabado sin frenar el dibujo:
+     *  - Diario (en el teléfono dueño del documento: extendido o modo solo): cada orden aplicada se agrega como una
+     *    línea a diario.jsonl desde un hilo aparte (una orden es chica: escribirla no se nota).
+     *  - Foto completa (actual.json): solo de vez en cuando (cada 400 órdenes, al deshacer, al abrir o al irse a
+     *    segundo plano) y cuando no se está dibujando (2,5 s quieto); al tomarla, el diario se vacía.
+     *  - Al abrir: foto + se repiten las órdenes del diario → queda como estaba aunque la app se haya caído.
+     *  - En el principal (o modo solo), si el documento ya tiene archivo .dmo, se guarda solo en él unos segundos
+     *    después del último cambio y al salir de la app (el archivo se escribe en otro hilo).
+     */
+    private final java.util.concurrent.ExecutorService disk = java.util.concurrent.Executors.newSingleThreadExecutor();
+    private java.io.Writer journalW; // solo se usa en el hilo de disco
+    private int journalWGen = -1;     // (ídem)
+    /** Número de la foto actual: su diario es diario-N.jsonl. Así, si la app cae entre la foto y el borrado del
+     *  diario anterior, al abrir no se repiten órdenes que ya estaban en la foto. */
+    private int jgen;
+    private int journalN;
+    private long lastOpAt;
 
     private File autosaveFile() { return new File(getFilesDir(), "actual.json"); }
 
-    private synchronized void writeAutosave(String json) {
+    private File journalFile(int g) { return new File(getFilesDir(), "diario-" + g + ".jsonl"); }
+
+    /** Graba una orden recién aplicada. */
+    private void journal(JSONObject o) {
+        if (isView()) return;
+        String op = o.optString("op");
+        lastOpAt = android.os.SystemClock.uptimeMillis();
+        if ("load".equals(op) || "new".equals(op)) { journalN++; ui.removeCallbacks(snapR); ui.postDelayed(snapR, 300); return; }
+        final String line = o.toString();
+        final int g = jgen;
+        journalN++;
+        disk.execute(() -> {
+            try {
+                if (journalW == null || journalWGen != g) {
+                    if (journalW != null) try { journalW.close(); } catch (Exception ignored) { }
+                    journalW = new java.io.BufferedWriter(new java.io.OutputStreamWriter(
+                            new FileOutputStream(journalFile(g), true), StandardCharsets.UTF_8));
+                    journalWGen = g;
+                }
+                journalW.write(line);
+                journalW.write('\n');
+                journalW.flush();
+            } catch (Exception ignored) { }
+        });
+        if (journalN >= 400 || "undo".equals(op) || "redo".equals(op)) { ui.removeCallbacks(snapR); ui.postDelayed(snapR, 2500); }
+    }
+
+    /** Foto completa cuando no se está dibujando (si se sigue dibujando, espera; con muchísimas órdenes, igual). */
+    private final Runnable snapR = new Runnable() {
+        @Override public void run() {
+            if (journalN == 0) return;
+            long quiet = android.os.SystemClock.uptimeMillis() - lastOpAt;
+            if (quiet < 2000 && journalN < 3000) { ui.postDelayed(this, 1500); return; }
+            snapshot(false);
+        }
+    };
+
+    private void snapshot(boolean wait) {
+        ui.removeCallbacks(snapR);
+        if (isView() || journalN == 0) return;
+        final int ng = ++jgen;
+        String js;
+        try { JSONObject d = doc.toJson(); d.put("_jgen", ng); js = d.toString(); } catch (JSONException e) { return; }
+        final String json = js;
+        journalN = 0;
+        java.util.concurrent.Future<?> f = disk.submit(() -> {
+            writeAutosave(json);
+            if (journalW != null && journalWGen < ng) {
+                try { journalW.close(); } catch (Exception ignored) { }
+                journalW = null; journalWGen = -1;
+            }
+            for (int g : journalGens()) if (g < ng) { //noinspection ResultOfMethodCallIgnored
+                journalFile(g).delete(); }
+        });
+        if (wait) try { f.get(3, java.util.concurrent.TimeUnit.SECONDS); } catch (Exception ignored) { }
+    }
+
+    private void writeAutosave(String json) {
         try {
             File tmp = new File(getFilesDir(), "actual.json.tmp");
             try (FileOutputStream o = new FileOutputStream(tmp)) { o.write(json.getBytes(StandardCharsets.UTF_8)); }
@@ -2368,15 +2601,90 @@ public final class MotionActivity extends Activity
         } catch (Exception ignored) { }
     }
 
+    /** Números de los diarios que hay en la carpeta, de menor a mayor. */
+    private java.util.List<Integer> journalGens() {
+        java.util.ArrayList<Integer> l = new java.util.ArrayList<>();
+        String[] names = getFilesDir().list();
+        if (names != null) for (String nm : names) {
+            if (!nm.startsWith("diario-") || !nm.endsWith(".jsonl")) continue;
+            try { l.add(Integer.parseInt(nm.substring(7, nm.length() - 6))); } catch (NumberFormatException ignored) { }
+        }
+        java.util.Collections.sort(l);
+        return l;
+    }
+
     private void loadAutosave() {
         File f = autosaveFile();
-        if (!f.exists()) return;
-        try (FileInputStream in = new FileInputStream(f)) {
+        int g0 = 0;
+        if (f.exists()) try (FileInputStream in = new FileInputStream(f)) {
             byte[] b = new byte[(int) f.length()];
             int n = 0;
             while (n < b.length) { int r = in.read(b, n, b.length - n); if (r < 0) break; n += r; }
-            doc.load(new JSONObject(new String(b, 0, n, StandardCharsets.UTF_8)));
+            JSONObject d = new JSONObject(new String(b, 0, n, StandardCharsets.UTF_8));
+            g0 = d.optInt("_jgen", 0);
+            doc.load(d);
         } catch (Exception ignored) { }
+        jgen = g0;
+        // lo que se hizo después de la última foto (también si la app se cayó), en orden
+        int replayed = 0;
+        for (int g : journalGens()) {
+            if (g < g0) { //noinspection ResultOfMethodCallIgnored
+                journalFile(g).delete(); continue; } // ya estaba en la foto
+            jgen = Math.max(jgen, g);
+            try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(
+                    new FileInputStream(journalFile(g)), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    try { if (doc.apply(new JSONObject(line))) replayed++; } catch (Exception ignored) { } // línea a medias
+                }
+            } catch (Exception ignored) { }
+        }
+        //noinspection ResultOfMethodCallIgnored
+        new File(getFilesDir(), "diario.jsonl").delete();
+        if (replayed > 0) { journalN = replayed; snapshot(false); }
+    }
+
+    // ---- guardado automático en el archivo .dmo (principal o modo solo)
+    private boolean fileDirty;
+    private long fileSeq;
+
+    private boolean autoFile() { return prefs.getBoolean("autoFile", true); }
+
+    private void markFileDirty() {
+        if (isEdit()) return;
+        fileDirty = true;
+        fileSeq++;
+        ui.removeCallbacks(fileR);
+        if (autoFile() && prefs.getString("docUri", null) != null) ui.postDelayed(fileR, 6000);
+    }
+
+    private final Runnable fileR = () -> saveFileNow(false);
+
+    private boolean fileSaving;
+
+    private void saveFileNow(boolean leaving) {
+        ui.removeCallbacks(fileR);
+        if (!fileDirty || !autoFile() || prefs.getString("docUri", null) == null) return;
+        if (!leaving && (playing || fileSaving)) { ui.postDelayed(fileR, 3000); return; }
+        final long seq = fileSeq;
+        fileSaving = true;
+        Files.autoWrite(this, ok -> {
+            fileSaving = false;
+            if (ok && seq == fileSeq) { fileDirty = false; refreshDocLabel(); }
+            else if (!ok) ui.postDelayed(fileR, 30000); // quizás el archivo se movió: se reintenta más tarde
+        });
+    }
+
+    /** Lo llama Files al guardar a mano. */
+    void savedToFile() { fileDirty = false; ui.removeCallbacks(fileR); refreshDocLabel(); }
+
+    private void refreshDocLabel() {
+        if (docLabel == null) return;
+        MDoc.Symbol Y = st.inSymbol() ? doc.symbol(st.sym) : null;
+        String file = prefs.getString("docName", null);
+        String mark = file == null ? "" : fileDirty ? "  •" : "  ✓";
+        docLabel.setText(Y != null ? "🎬 " + doc.scene + "  ›  ◈ " + Y.name + "   ↩"
+                : "🎬 " + doc.scene + "  ·  " + (file == null ? "Sin guardar" : file) + mark);
     }
 
     private void saveState() {

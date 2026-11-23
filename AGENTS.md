@@ -188,6 +188,25 @@ en los dos teléfonos.
   naranjo muestra dónde queda. Orden `moveKey {l,f,to}` (si ahí había un clave, lo reemplaza; mover el primero
   deja fotogramas vacíos antes). La barra de abajo lleva las teclas de Flash: "● F6", "○ F7", "F5 ＋" (insertar,
   o extender la capa hasta el cabezal si está más allá del final), "F5 －" (quitar).
+- Guardado continuo (`MotionActivity`, sección "guardar"): el dueño del documento (extendido o solo) agrega cada
+  orden aplicada a `diario-N.jsonl` desde un hilo de disco (`disk`, un solo hilo: el orden se respeta). La foto
+  completa `actual.json` (con `_jgen` = N) se toma solo cada 400 órdenes, al deshacer/rehacer, al abrir/nuevo, al
+  pasar a segundo plano o al cerrar, y espera a que haya 2 s sin cambios (`doc.toJson()` es lo caro). Al abrir:
+  foto + órdenes de los diarios N.. en orden (se recupera aunque la app se haya caído); los diarios < N ya están
+  en la foto y se borran. Ya no se serializa el documento entero cada 1,5 s.
+- Guardado automático en el .dmo (principal o solo): si el documento ya tiene archivo (`docUri`), 6 s después del
+  último cambio y al ir a segundo plano o cerrar; `Files.autoWrite` toma el JSON y escribe el zip en otro hilo
+  (`Files.zip`, sincronizado con el guardado a mano). Encabezado: "•" pendiente, "✓" guardado. Se apaga en
+  ☰ › "Guardar solo en el archivo .dmo" (pref `autoFile`).
+- Efectos (como Photoshop / filtros de Flash 8): cada objeto (`Shape`: forma, símbolo o imagen) puede tener
+  resplandor exterior (`glowC` color con opacidad, `glowS` tamaño, `glowI` intensidad 0,25–3; JSON "gl") y sombra
+  paralela (`shadC`, `shadS` desenfoque, `shadD` distancia, `shadA` ángulo de la luz, 120° = arriba a la izquierda;
+  JSON "sh"). `Render.effects` dibuja la silueta del objeto entero (`Tools.sil`: todo de un color con
+  `BlurMaskFilter`; las imágenes por su transparencia con `extractAlpha`) en una capa con la opacidad del efecto:
+  la sombra corrida (NORMAL) y el resplandor solo por fuera (OUTER, una pasada por cada 1 de intensidad). No en
+  papel cebolla ni modo contorno. Se interpolan en `lerpShape` (el ángulo por el camino corto). Panel "Efectos"
+  en propiedades (con algo elegido); el principal manda `moCmd {c:"fx", fx}` y la mesa aplica `StageView.setFx` a
+  todo lo elegido (orden `set`). `moSel` lleva los efectos del primero elegido (`fx`).
 - Botonera de la mesa (`addStageBar`, a la derecha de la mesa en el extendido y en el modo solo): ↶ ↷ ⏯ ⧉ 📋.
   La barra de fotogramas del principal (F6, F7, F5＋, F5－, ⏯, ↝, ✂, 🖼) reparte el ancho con pesos para que todo
   quede a la vista (en el modo solo va con desplazamiento). El portapapeles de fotogramas se comparte: al copiar se

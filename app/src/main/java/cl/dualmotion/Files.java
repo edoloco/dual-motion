@@ -108,48 +108,74 @@ final class Files {
     /** Escribe el documento en el archivo. quiet: si falla no avisa (luego se ofrece "Guardar como"). */
     private static boolean write(MotionActivity a, Uri u, boolean quiet) {
         byte[] json = a.doc().toJson().toString().getBytes(StandardCharsets.UTF_8);
-        OutputStream os = null;
         try {
-            try { os = a.getContentResolver().openOutputStream(u, "wt"); }
-            catch (Exception e) { os = a.getContentResolver().openOutputStream(u, "w"); }
-            if (os == null) throw new Exception("sin salida");
-            try (ZipOutputStream z = new ZipOutputStream(os)) {
-                z.putNextEntry(new ZipEntry(MARK_ENTRY));
-                z.write("DUAL Motion\nformato 1\n".getBytes(StandardCharsets.UTF_8));
-                z.closeEntry();
-                z.putNextEntry(new ZipEntry(DOC_ENTRY));
-                z.write(json);
-                z.closeEntry();
-                for (MDoc.Sound snd : a.doc().sounds) {
-                    java.io.File f = Sounds.file(a, snd.id, snd.ext);
-                    if (!f.isFile()) continue;
-                    z.putNextEntry(new ZipEntry("sonidos/" + snd.id + "." + snd.ext));
-                    try (InputStream in = new java.io.FileInputStream(f)) {
-                        byte[] buf = new byte[65536];
-                        int n;
-                        while ((n = in.read(buf)) > 0) z.write(buf, 0, n);
-                    }
-                    z.closeEntry();
-                }
-                for (MDoc.Image im : a.doc().images) {
-                    java.io.File f = Images.file(a, im.id, im.ext);
-                    if (!f.isFile()) continue;
-                    z.putNextEntry(new ZipEntry("imagenes/" + im.id + "." + im.ext));
-                    try (InputStream in = new java.io.FileInputStream(f)) {
-                        byte[] buf = new byte[65536];
-                        int n;
-                        while ((n = in.read(buf)) > 0) z.write(buf, 0, n);
-                    }
-                    z.closeEntry();
-                }
-            }
+            zip(a, u, json, parts(a));
             remember(a, u);
+            a.savedToFile();
             Ui.toast(a, "Guardado: " + a.prefs().getString("docName", ""));
             return true;
         } catch (Exception e) {
             if (!quiet) Ui.toast(a, "No se pudo guardar");
-            try { if (os != null) os.close(); } catch (Exception ignored) { }
             return false;
+        }
+    }
+
+    /**
+     * Guardado automático en el mismo .dmo: el documento se toma aquí (rápido) y el archivo se escribe en otro
+     * hilo, sin avisos. done(true) si quedó guardado.
+     */
+    static void autoWrite(MotionActivity a, java.util.function.Consumer<Boolean> done) {
+        String uri = a.prefs().getString("docUri", null);
+        if (uri == null) { done.accept(false); return; }
+        final byte[] json = a.doc().toJson().toString().getBytes(StandardCharsets.UTF_8);
+        final java.util.List<String[]> parts = parts(a);
+        final Context app = a.getApplicationContext();
+        final Uri u = Uri.parse(uri);
+        final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+        new Thread(() -> {
+            boolean ok;
+            try { zip(app, u, json, parts); ok = true; } catch (Exception e) { ok = false; }
+            final boolean r = ok;
+            main.post(() -> done.accept(r));
+        }, "dm-guardar").start();
+    }
+
+    /** Archivos que van dentro del .dmo: {nombre en el zip, ruta}. */
+    private static java.util.List<String[]> parts(MotionActivity a) {
+        java.util.ArrayList<String[]> l = new java.util.ArrayList<>();
+        for (MDoc.Sound snd : a.doc().sounds) {
+            java.io.File f = Sounds.file(a, snd.id, snd.ext);
+            if (f.isFile()) l.add(new String[]{"sonidos/" + snd.id + "." + snd.ext, f.getPath()});
+        }
+        for (MDoc.Image im : a.doc().images) {
+            java.io.File f = Images.file(a, im.id, im.ext);
+            if (f.isFile()) l.add(new String[]{"imagenes/" + im.id + "." + im.ext, f.getPath()});
+        }
+        return l;
+    }
+
+    /** Uno a la vez (el guardado automático y el de la mano no se pisan). */
+    private static synchronized void zip(Context c, Uri u, byte[] json, java.util.List<String[]> parts) throws Exception {
+        OutputStream os;
+        try { os = c.getContentResolver().openOutputStream(u, "wt"); }
+        catch (Exception e) { os = c.getContentResolver().openOutputStream(u, "w"); }
+        if (os == null) throw new Exception("sin salida");
+        try (ZipOutputStream z = new ZipOutputStream(new java.io.BufferedOutputStream(os, 1 << 16))) {
+            z.putNextEntry(new ZipEntry(MARK_ENTRY));
+            z.write("DUAL Motion\nformato 1\n".getBytes(StandardCharsets.UTF_8));
+            z.closeEntry();
+            z.putNextEntry(new ZipEntry(DOC_ENTRY));
+            z.write(json);
+            z.closeEntry();
+            byte[] buf = new byte[65536];
+            for (String[] p : parts) {
+                z.putNextEntry(new ZipEntry(p[0]));
+                try (InputStream in = new java.io.FileInputStream(p[1])) {
+                    int n;
+                    while ((n = in.read(buf)) > 0) z.write(buf, 0, n);
+                }
+                z.closeEntry();
+            }
         }
     }
 

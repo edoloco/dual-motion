@@ -41,6 +41,14 @@ public final class MDoc {
         /** Imagen (id de MDoc.Image): se dibuja en el rectángulo n[0],n[1] – n[2],n[3]. */
         public String img;
         public boolean isImg() { return img != null; }
+        /**
+         * Efectos (como Resplandor exterior y Sombra paralela de Photoshop / filtros de Flash 8). Color 0 = sin
+         * efecto (el alfa del color es la opacidad). Resplandor: tamaño (desenfoque) e intensidad (1 = normal,
+         * hasta 3). Sombra: tamaño, distancia y ángulo de la luz (120° = luz de arriba a la izquierda).
+         */
+        public int glowC, shadC;
+        public float glowS = 10, glowI = 1, shadS = 6, shadD = 8, shadA = 120;
+        public boolean hasFx() { return glowC != 0 || shadC != 0; }
         /** Objeto (símbolo o imagen): las herramientas de pintar no lo tocan desde afuera, como en Flash. */
         public boolean isObj() { return sym != null || img != null; }
         transient Path path;
@@ -57,7 +65,42 @@ public final class MDoc {
             s.sym = sym; s.first = first; s.loop = loop;
             s.sub = sub == null ? null : sub.clone();
             s.img = img;
+            s.glowC = glowC; s.glowS = glowS; s.glowI = glowI;
+            s.shadC = shadC; s.shadS = shadS; s.shadD = shadD; s.shadA = shadA;
             return s;
+        }
+
+        boolean sameFx(Shape o) {
+            return glowC == o.glowC && shadC == o.shadC && glowS == o.glowS && glowI == o.glowI
+                    && shadS == o.shadS && shadD == o.shadD && shadA == o.shadA;
+        }
+
+        /** Los efectos para el panel: {glow:{c,s,i}, shadow:{c,s,d,a}} (c 0 = apagado). */
+        public JSONObject fxJson() {
+            JSONObject o = new JSONObject();
+            try {
+                JSONObject g = new JSONObject();
+                g.put("c", glowC); g.put("s", (double) glowS); g.put("i", (double) glowI);
+                JSONObject h = new JSONObject();
+                h.put("c", shadC); h.put("s", (double) shadS); h.put("d", (double) shadD); h.put("a", (double) shadA);
+                o.put("glow", g); o.put("shadow", h);
+            } catch (JSONException ignored) { }
+            return o;
+        }
+
+        public void setFx(JSONObject o) {
+            JSONObject g = o.optJSONObject("glow"), h = o.optJSONObject("shadow");
+            if (g != null) {
+                glowC = g.optInt("c", glowC);
+                glowS = (float) Math.max(1, Math.min(80, g.optDouble("s", glowS)));
+                glowI = (float) Math.max(0.25, Math.min(3, g.optDouble("i", glowI)));
+            }
+            if (h != null) {
+                shadC = h.optInt("c", shadC);
+                shadS = (float) Math.max(0, Math.min(80, h.optDouble("s", shadS)));
+                shadD = (float) Math.max(0, Math.min(200, h.optDouble("d", shadD)));
+                shadA = (float) (((h.optDouble("a", shadA) % 360) + 360) % 360);
+            }
         }
 
         public void translate(float dx, float dy) {
@@ -78,8 +121,12 @@ public final class MDoc {
             if (sym != null) { o.put("y", sym); if (first != 0) o.put("ff", first); if (loop != 0) o.put("lp", loop); }
             if (sub != null && sub.length > 0) { JSONArray b = new JSONArray(); for (int v : sub) b.put(v); o.put("sub", b); }
             if (img != null) o.put("im", img);
+            if (glowC != 0) o.put("gl", new JSONArray().put(glowC).put(r2(glowS)).put(r2(glowI)));
+            if (shadC != 0) o.put("sh", new JSONArray().put(shadC).put(r2(shadS)).put(r2(shadD)).put(r2(shadA)));
             return o;
         }
+
+        private static double r2(float v) { return Math.round(v * 100) / 100.0; }
 
         public static Shape from(JSONObject o) {
             Shape s = new Shape();
@@ -94,6 +141,14 @@ public final class MDoc {
             s.width = (float) o.optDouble("w", 2);
             if (o.has("y")) { s.sym = o.optString("y"); s.first = Math.max(0, o.optInt("ff")); s.loop = clamp(o.optInt("lp"), 0, 2); }
             if (o.has("im")) s.img = o.optString("im");
+            JSONArray gl = o.optJSONArray("gl"), sh = o.optJSONArray("sh");
+            if (gl != null && gl.length() >= 3) {
+                s.glowC = gl.optInt(0); s.glowS = (float) gl.optDouble(1, 10); s.glowI = (float) gl.optDouble(2, 1);
+            }
+            if (sh != null && sh.length() >= 4) {
+                s.shadC = sh.optInt(0); s.shadS = (float) sh.optDouble(1, 6);
+                s.shadD = (float) sh.optDouble(2, 8); s.shadA = (float) sh.optDouble(3, 120);
+            }
             JSONArray b = o.optJSONArray("sub");
             if (b != null && b.length() > 0) {
                 int cnt = s.count(), k = 0;
@@ -292,7 +347,8 @@ public final class MDoc {
         if (!java.util.Objects.equals(a.img, b.img)) return a;
         if (a.isInst() && !a.sym.equals(b.sym)) return a;
         if (a.n.length != b.n.length || a.closed != b.closed || !java.util.Arrays.equals(a.sub, b.sub)) return a;
-        boolean same = a.width == b.width && a.stroke == b.stroke && a.fill == b.fill && java.util.Arrays.equals(a.n, b.n);
+        boolean same = a.width == b.width && a.stroke == b.stroke && a.fill == b.fill && java.util.Arrays.equals(a.n, b.n)
+                && a.sameFx(b);
         if (same) return a;
         Shape s = a.copy();
         if (a.isInst()) {
@@ -302,6 +358,13 @@ public final class MDoc {
         s.width = lerp(a.width, b.width, e);
         s.stroke = lerpColor(a.stroke, b.stroke, e);
         s.fill = lerpColor(a.fill, b.fill, e);
+        // los efectos también se interpolan (un resplandor que crece, una sombra que se aleja…)
+        s.glowC = lerpColor(a.glowC, b.glowC, e);
+        s.shadC = lerpColor(a.shadC, b.shadC, e);
+        s.glowS = lerp(a.glowS, b.glowS, e); s.glowI = lerp(a.glowI, b.glowI, e);
+        s.shadS = lerp(a.shadS, b.shadS, e); s.shadD = lerp(a.shadD, b.shadD, e);
+        float da = ((b.shadA - a.shadA + 540) % 360) - 180; // por el camino corto
+        s.shadA = a.shadA + da * e;
         s.dirty();
         return s;
     }

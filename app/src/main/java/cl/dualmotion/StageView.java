@@ -31,7 +31,8 @@ public final class StageView extends View {
         /** Cuentagotas: colores tomados de una forma. */
         void picked(int stroke, int fill, float width);
         /** Cambió la selección; inst = la instancia de símbolo si es lo único elegido. */
-        void selChanged(int n, MDoc.Shape inst);
+        /** first: el primero de lo elegido (para mostrar sus efectos), o null. */
+        void selChanged(int n, MDoc.Shape inst, MDoc.Shape first);
         /** Doble toque en una instancia: editar su símbolo en el lugar. */
         void enterSymbol(int layer, int frame, int index);
         void exitSymbol();
@@ -108,7 +109,8 @@ public final class StageView extends View {
         MDoc.Shape inst = null;
         if (sel.size() == 1 && k != null && sel.get(0) < k.shapes.size() && k.shapes.get(sel.get(0)).isInst())
             inst = k.shapes.get(sel.get(0));
-        host.selChanged(sel.size(), inst);
+        MDoc.Shape first = !sel.isEmpty() && k != null && sel.get(0) < k.shapes.size() ? k.shapes.get(sel.get(0)) : null;
+        host.selChanged(sel.size(), inst, first);
     }
 
     /** Lo que se ve de la capa actual (en un intermedio de interpolación, lo interpolado). */
@@ -238,6 +240,24 @@ public final class StageView extends View {
             idx.add(i); ss.add(sh);
         }
         if (idx.isEmpty()) { Ui.toast(getContext(), "Selecciona un símbolo"); return; }
+        submitSet(idx, ss);
+        notifySel();
+    }
+
+    /** Efectos (resplandor y sombra) para todo lo elegido: fx = {glow:{c,s,i}, shadow:{c,s,d,a}}. */
+    public void setFx(JSONObject fx) {
+        validateSel();
+        MDoc.Key k = curKey();
+        if (k == null || sel.isEmpty() || fx == null) { Ui.toast(getContext(), "Elige algo con la flecha"); return; }
+        if (!editable()) return;
+        ArrayList<Integer> idx = new ArrayList<>();
+        ArrayList<MDoc.Shape> ss = new ArrayList<>();
+        for (int i : sel) {
+            if (i >= k.shapes.size()) continue;
+            MDoc.Shape sh = k.shapes.get(i).copy();
+            sh.setFx(fx);
+            idx.add(i); ss.add(sh);
+        }
         submitSet(idx, ss);
         notifySel();
     }

@@ -24,11 +24,20 @@ public final class Render {
         int elapsed, depth;
         /** Instancia que no se dibuja (la que se está editando en el lugar). */
         MDoc.Shape skip;
+        /** Silueta (para sombra y resplandor): todo de este color opaco y desenfocado; 0 = dibujo normal. */
+        int sil;
+        final Paint silF = new Paint(Paint.ANTI_ALIAS_FLAG), silS = new Paint(Paint.ANTI_ALIAS_FLAG),
+                silB = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+        final RectF fxR = new RectF();
         Tools() {
             fill.setStyle(Paint.Style.FILL);
             stroke.setStyle(Paint.Style.STROKE);
             stroke.setStrokeCap(Paint.Cap.ROUND);
             stroke.setStrokeJoin(Paint.Join.ROUND);
+            silF.setStyle(Paint.Style.FILL);
+            silS.setStyle(Paint.Style.STROKE);
+            silS.setStrokeCap(Paint.Cap.ROUND);
+            silS.setStrokeJoin(Paint.Join.ROUND);
         }
     }
     private static final ThreadLocal<Tools> TOOLS = new ThreadLocal<Tools>() {
@@ -95,10 +104,16 @@ public final class Render {
      * (modo contorno de la capa).
      */
     public static void shape(Canvas c, MDoc.Shape s, int tint, int outline, float hair) {
+        Tools t = TOOLS.get();
+        if (s.hasFx() && tint == 0 && outline == 0 && t.sil == 0 && s != t.skip) effects(c, s, hair);
         if (s.isInst()) { instance(c, s, tint, outline, hair); return; }
         if (s.isImg()) { image(c, s, tint, outline, hair); return; }
         Path p = path(s);
-        Tools t = TOOLS.get();
+        if (t.sil != 0) { // silueta: relleno y trazo del mismo color, con el desenfoque puesto
+            if (s.fill != 0 && s.closed) c.drawPath(p, t.silF);
+            if (s.stroke != 0 && s.width > 0) { t.silS.setStrokeWidth(s.width); c.drawPath(p, t.silS); }
+            return;
+        }
         Paint fillP = t.fill, strokeP = t.stroke;
         if (outline != 0) {
             strokeP.setColor(outline);
@@ -114,6 +129,61 @@ public final class Render {
             strokeP.setColor(tint != 0 ? tint : s.stroke);
             strokeP.setStrokeWidth(s.width);
             c.drawPath(p, strokeP);
+        }
+    }
+
+    // ---------------------------------------------------------------- efectos: sombra y resplandor
+    /**
+     * Sombra paralela y resplandor exterior (como en Photoshop): se dibuja la silueta del objeto entero (una forma,
+     * un símbolo con todo lo de adentro o una imagen según su transparencia) de un color, desenfocada, en una capa
+     * aparte con la opacidad del efecto. La sombra va corrida según el ángulo de la luz; el resplandor queda solo
+     * por fuera (BlurMaskFilter OUTER).
+     */
+    private static void effects(Canvas c, MDoc.Shape s, float hair) {
+        Tools t = TOOLS.get();
+        RectF b = t.fxR;
+        b.set(bounds(s));
+        if (b.isEmpty()) return;
+        if (s.shadC != 0 && (s.shadC >>> 24) > 0) {
+            double a = Math.toRadians(s.shadA);
+            float dx = (float) (-Math.cos(a) * s.shadD), dy = (float) (Math.sin(a) * s.shadD);
+            float pad = s.shadS * 3 + 2;
+            int save = c.saveLayerAlpha(b.left + dx - pad, b.top + dy - pad, b.right + dx + pad, b.bottom + dy + pad,
+                    s.shadC >>> 24);
+            c.translate(dx, dy);
+            silhouette(c, s, s.shadC | 0xFF000000, s.shadS, android.graphics.BlurMaskFilter.Blur.NORMAL, hair);
+            c.restoreToCount(save);
+        }
+        b.set(bounds(s));
+        if (s.glowC != 0 && (s.glowC >>> 24) > 0) {
+            float pad = s.glowS * 3 + 2;
+            int passes = Math.max(1, (int) Math.ceil(s.glowI));
+            int alpha = Math.round((s.glowC >>> 24) * Math.min(1f, s.glowI / passes * (passes > 1 ? 1.2f : 1f)));
+            int save = c.saveLayerAlpha(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad, Math.min(255, alpha));
+            for (int i = 0; i < passes; i++)
+                silhouette(c, s, s.glowC | 0xFF000000, s.glowS, android.graphics.BlurMaskFilter.Blur.OUTER, hair);
+            c.restoreToCount(save);
+        }
+    }
+
+    private static void silhouette(Canvas c, MDoc.Shape s, int color, float blur,
+                                   android.graphics.BlurMaskFilter.Blur kind, float hair) {
+        Tools t = TOOLS.get();
+        android.graphics.MaskFilter mf = blur > 0.3f ? new android.graphics.BlurMaskFilter(blur, kind) : null;
+        t.silF.setColor(color); t.silS.setColor(color); t.silB.setColor(color);
+        t.silF.setMaskFilter(mf); t.silS.setMaskFilter(mf); t.silB.setMaskFilter(mf);
+        t.sil = color;
+        try { shape(c, s, 0, 0, hair); } finally { t.sil = 0; }
+    }
+
+    /** Solo la transparencia de una imagen (para su silueta), guardada por imagen. */
+    private static final java.util.WeakHashMap<android.graphics.Bitmap, android.graphics.Bitmap> alphas = new java.util.WeakHashMap<>();
+
+    private static android.graphics.Bitmap alphaOf(android.graphics.Bitmap b) {
+        synchronized (alphas) {
+            android.graphics.Bitmap a = alphas.get(b);
+            if (a == null) { a = b.extractAlpha(); alphas.put(b, a); }
+            return a;
         }
     }
 
@@ -172,6 +242,11 @@ public final class Render {
             return;
         }
         android.graphics.Bitmap b = Images.get(t.doc, s.img);
+        if (t.sil != 0) { // silueta de la imagen: su transparencia, de un color
+            if (b != null) c.drawBitmap(alphaOf(b), null, r, t.silB);
+            else c.drawRect(r, t.silF);
+            return;
+        }
         if (b == null) { // todavía cargando o llegando: un marco gris
             t.fill.setColor(tint != 0 ? withAlpha(tint, 0x22) : 0x22000000);
             c.drawRect(r, t.fill);
