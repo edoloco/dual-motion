@@ -55,7 +55,14 @@ public final class MDoc {
         transient RectF bounds;
 
         public int count() { return n.length / 6; }
-        public void dirty() { path = null; bounds = null; }
+        public void dirty() { path = null; bounds = null; js = null; }
+        /** Esta forma ya escrita en JSON (se reusa al guardar y en el deshacer; dirty() la borra). */
+        transient String js;
+        String jsonStr() {
+            String j = js;
+            if (j == null) { try { j = toJson().toString(); } catch (JSONException e) { j = "{}"; } js = j; }
+            return j;
+        }
         public boolean isInst() { return sym != null; }
 
         public Shape copy() {
@@ -191,6 +198,13 @@ public final class MDoc {
             for (Layer L : layers) ls.put(L.toJson());
             o.put("layers", ls);
             return o;
+        }
+
+        String toJsonString() throws JSONException {
+            StringBuilder b = new StringBuilder("{\"id\":").append(JSONObject.quote(id)).append(",\"name\":")
+                    .append(JSONObject.quote(name)).append(",\"layers\":[");
+            for (int i = 0; i < layers.size(); i++) { if (i > 0) b.append(','); b.append(layers.get(i).toJsonString()); }
+            return b.append("]}").toString();
         }
 
         static Symbol from(JSONObject o) {
@@ -495,6 +509,44 @@ public final class MDoc {
             return o;
         }
 
+        /**
+         * El mismo JSON que toJson(), pero armado como texto reusando el de cada forma (jsonStr): mucho más rápido
+         * con capas de muchos trazos. Lo usan el deshacer y el guardado.
+         */
+        String toJsonString() throws JSONException {
+            JSONObject o = new JSONObject();
+            o.put("name", name); o.put("vis", vis); o.put("lock", lock); o.put("out", out);
+            o.put("color", color); o.put("len", len);
+            if (audio) {
+                o.put("type", "audio");
+                if (vol != 1) o.put("v", Math.round(vol * 100) / 100.0);
+                JSONArray cs = new JSONArray();
+                for (Clip c : clips) cs.put(c.toJson());
+                o.put("clips", cs);
+            }
+            String head = o.toString();
+            StringBuilder b = new StringBuilder(head.length() + 1024);
+            b.append(head, 0, head.length() - 1).append(",\"keys\":[");
+            boolean firstKey = true;
+            for (Map.Entry<Integer, Key> e : keys.entrySet()) {
+                JSONObject k = new JSONObject();
+                k.put("f", e.getKey());
+                e.getValue().toJson(k);
+                String ks = k.toString();
+                if (!firstKey) b.append(',');
+                firstKey = false;
+                b.append(ks, 0, ks.length() - 1).append(",\"s\":[");
+                boolean first = true;
+                for (Shape s : e.getValue().shapes) {
+                    if (!first) b.append(',');
+                    first = false;
+                    b.append(s.jsonStr());
+                }
+                b.append("]}");
+            }
+            return b.append("]}").toString();
+        }
+
         static Layer from(JSONObject o) {
             Layer L = new Layer();
             L.name = o.optString("name", "Capa");
@@ -657,6 +709,40 @@ public final class MDoc {
         return o;
     }
 
+    /** Igual que toJson().toString(), pero rápido (reusa el JSON de cada forma). extra: campos más, o null. */
+    public String toJsonString(JSONObject extra) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("v", 1); o.put("w", w); o.put("h", h); o.put("fps", fps);
+            o.put("scene", scene); o.put("seq", seq);
+            if (!sounds.isEmpty()) {
+                JSONArray ss = new JSONArray();
+                for (Sound s : sounds) ss.put(s.toJson());
+                o.put("sounds", ss);
+            }
+            if (!symbols.isEmpty()) o.put("symSeq", symSeq);
+            if (!images.isEmpty()) {
+                JSONArray is = new JSONArray();
+                for (Image m : images) is.put(m.toJson());
+                o.put("images", is);
+            }
+            if (extra != null) for (java.util.Iterator<String> it = extra.keys(); it.hasNext(); ) { String k = it.next(); o.put(k, extra.get(k)); }
+            String head = o.toString();
+            StringBuilder b = new StringBuilder(head.length() + 4096);
+            b.append(head, 0, head.length() - 1).append(",\"layers\":[");
+            for (int i = 0; i < layers.size(); i++) { if (i > 0) b.append(','); b.append(layers.get(i).toJsonString()); }
+            b.append(']');
+            if (!symbols.isEmpty()) {
+                b.append(",\"symbols\":[");
+                for (int i = 0; i < symbols.size(); i++) { if (i > 0) b.append(','); b.append(symbols.get(i).toJsonString()); }
+                b.append(']');
+            }
+            return b.append('}').toString();
+        } catch (JSONException e) {
+            return toJson().toString();
+        }
+    }
+
     /** Carga un documento completo (borra la historia de deshacer). */
     public void load(JSONObject o) {
         loadInto(o);
@@ -708,14 +794,20 @@ public final class MDoc {
 
     private Step snap(int l) {
         try {
-            return l < 0 ? new Step(-1, toJson().toString()) : new Step(l, layers.get(l).toJson().toString());
-        } catch (JSONException e) { return new Step(-1, toJson().toString()); }
+            return l < 0 ? new Step(-1, toJsonString(null)) : new Step(l, layers.get(l).toJsonString());
+        } catch (JSONException e) { return new Step(-1, toJsonString(null)); }
     }
+
+    /** Tope de memoria del deshacer (en caracteres): con capas enormes se guardan menos pasos, no se llena la memoria. */
+    private static final long MAX_UNDO_CHARS = 24_000_000;
 
     private void push(int l) {
         undo.add(snap(l));
         if (undo.size() > MAX_UNDO) undo.remove(0);
         redo.clear();
+        long total = 0;
+        for (Step s : undo) total += s.json.length();
+        while (undo.size() > 1 && total > MAX_UNDO_CHARS) total -= undo.remove(0).json.length();
     }
 
     private void restore(Step s) {

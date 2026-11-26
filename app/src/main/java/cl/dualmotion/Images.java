@@ -49,7 +49,11 @@ final class Images {
 
     static File file(Context c, String id, String ext) { return new File(dir(c), id + "." + ext); }
 
+    /** Sube cada vez que llega o se carga una imagen (la mesa rehace su imagen guardada). */
+    static volatile int gen;
+
     private static void changed() {
+        gen++;
         Runnable r = onChange;
         if (r != null) main.post(r);
     }

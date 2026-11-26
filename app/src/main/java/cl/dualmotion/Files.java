@@ -107,7 +107,7 @@ final class Files {
 
     /** Escribe el documento en el archivo. quiet: si falla no avisa (luego se ofrece "Guardar como"). */
     private static boolean write(MotionActivity a, Uri u, boolean quiet) {
-        byte[] json = a.doc().toJson().toString().getBytes(StandardCharsets.UTF_8);
+        byte[] json = a.doc().toJsonString(null).getBytes(StandardCharsets.UTF_8);
         try {
             zip(a, u, json, parts(a));
             remember(a, u);
@@ -127,7 +127,7 @@ final class Files {
     static void autoWrite(MotionActivity a, java.util.function.Consumer<Boolean> done) {
         String uri = a.prefs().getString("docUri", null);
         if (uri == null) { done.accept(false); return; }
-        final byte[] json = a.doc().toJson().toString().getBytes(StandardCharsets.UTF_8);
+        final byte[] json = a.doc().toJsonString(null).getBytes(StandardCharsets.UTF_8);
         final java.util.List<String[]> parts = parts(a);
         final Context app = a.getApplicationContext();
         final Uri u = Uri.parse(uri);

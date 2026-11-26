@@ -188,6 +188,17 @@ en los dos teléfonos.
   naranjo muestra dónde queda. Orden `moveKey {l,f,to}` (si ahí había un clave, lo reemplaza; mover el primero
   deja fotogramas vacíos antes). La barra de abajo lleva las teclas de Flash: "● F6", "○ F7", "F5 ＋" (insertar,
   o extender la capa hasta el cabezal si está más allá del final), "F5 －" (quitar).
+- Rendimiento: (1) deshacer y guardado usan `MDoc.toJsonString` / `Layer.toJsonString`, que arman el texto
+  reusando el JSON de cada forma (`Shape.jsonStr`, cacheado; `dirty()` lo borra). Cualquier cambio a una forma
+  que ya está en el documento debe hacerse sobre una copia o llamar a `dirty()`. Antes cada orden serializaba la
+  capa entera (con 300 trazos: ~90 ms por trazo en PC, 33× más lento). El deshacer tiene tope de memoria
+  (`MAX_UNDO_CHARS`, 24 M caracteres) además de 60 pasos. (2) La mesa guarda como imagen (tamaño de pantalla) lo
+  de abajo, la capa actual y lo de arriba (`StageView.buildCache`, 120 ms después de que cambie documento,
+  fotograma, capa, zoom/posición, papel cebolla o llegue una imagen: `Images.gen`); cada cuadro pega las
+  imágenes y dibuja en vivo solo el trazo/selección. La capa actual va en vivo si se está moviendo, borrando,
+  editando nodos o transformando (`curCacheable`). Sin caché al reproducir y dentro de un símbolo.
+- Errores: `Crash` guarda el error (pila, versión, teléfono, memoria) en `ultimo-error.txt` antes de cerrarse y
+  lo muestra la próxima vez con "Copiar detalle". La repetición del diario al abrir corta si falta memoria.
 - Guardado continuo (`MotionActivity`, sección "guardar"): el dueño del documento (extendido o solo) agrega cada
   orden aplicada a `diario-N.jsonl` desde un hilo de disco (`disk`, un solo hilo: el orden se respeta). La foto
   completa `actual.json` (con `_jgen` = N) se toma solo cada 400 órdenes, al deshacer/rehacer, al abrir/nuevo, al

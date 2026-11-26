@@ -65,6 +65,7 @@ public final class LinkService extends Service implements Net.Listener {
 
     @Override public void onCreate() {
         super.onCreate();
+        Crash.install(this);
         inst = this;
         channels(this);
     }

@@ -97,6 +97,7 @@ public final class MotionActivity extends Activity
     // ================================================================ ciclo de vida
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
+        Crash.install(this);
         prefs = getSharedPreferences("dm", MODE_PRIVATE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         WindowManager.LayoutParams wlp = getWindow().getAttributes();
@@ -116,6 +117,7 @@ public final class MotionActivity extends Activity
         if (isEdit()) buildEdit(); else buildMain();
         keepClearOfCutout(root);
         if (!isSolo()) { LinkService.start(this, role); LinkService.attach(this); }
+        ui.postDelayed(() -> Crash.showIfAny(this), 800);
         Sounds.onChange = () -> { if (tl != null) tl.invalidate(); };
         Sounds.warm(this, doc);
         Images.init(this);
@@ -2577,7 +2579,7 @@ public final class MotionActivity extends Activity
         if (isView() || journalN == 0) return;
         final int ng = ++jgen;
         String js;
-        try { JSONObject d = doc.toJson(); d.put("_jgen", ng); js = d.toString(); } catch (JSONException e) { return; }
+        try { js = doc.toJsonString(new JSONObject().put("_jgen", ng)); } catch (JSONException e) { return; }
         final String json = js;
         journalN = 0;
         java.util.concurrent.Future<?> f = disk.submit(() -> {
@@ -2635,7 +2637,9 @@ public final class MotionActivity extends Activity
                     new FileInputStream(journalFile(g)), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = r.readLine()) != null) {
-                    try { if (doc.apply(new JSONObject(line))) replayed++; } catch (Exception ignored) { } // línea a medias
+                    try { if (doc.apply(new JSONObject(line))) replayed++; }
+                    catch (OutOfMemoryError e) { break; } // mejor abrir con algo menos que no abrir
+                    catch (Exception ignored) { } // línea a medias
                 }
             } catch (Exception ignored) { }
         }

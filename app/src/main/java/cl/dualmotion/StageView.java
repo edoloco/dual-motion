@@ -314,6 +314,33 @@ public final class StageView extends View {
         int f = host.shownFrame();
         boolean playing = host.playing();
         if (!playing) validateSel();
+        // capas guardadas como imagen: si nada cambió (solo se mueve el dedo), no se redibuja todo el dibujo
+        boolean canCache = !playing && !st.inSymbol() && getWidth() > 0 && getHeight() > 0;
+        String key = canCache ? cacheKey(d, st, f) : null;
+        if (canCache && key.equals(cacheKey) && backBmp != null) {
+            boolean curOk = curCacheable(st);
+            c.drawBitmap(backBmp, 0, 0, null);
+            if (curOk && curBmp != null) c.drawBitmap(curBmp, 0, 0, null);
+            c.save();
+            c.translate(tx, ty);
+            c.scale(s, s);
+            float hair = 1f / s;
+            Render.use(d);
+            if (!curOk || curBmp == null) {
+                int i = st.layer;
+                if (i >= 0 && i < d.layers.size()) drawLayer(c, d.layers, i, st, f, false, hair);
+            }
+            c.restore();
+            if (frontBmp != null) c.drawBitmap(frontBmp, 0, 0, null);
+            c.save();
+            c.translate(tx, ty);
+            c.scale(s, s);
+            drawOverlayPart(c, d, st, hair);
+            c.restore();
+            drawChips(c, false);
+            return;
+        }
+        if (canCache) { removeCallbacks(cacheR); postDelayed(cacheR, 120); }
         c.drawColor(Ui.WORK);
 
         c.save();
@@ -339,39 +366,9 @@ public final class StageView extends View {
         }
         if (st.onion && !playing) Render.onion(c, T, f, 2, hair);
 
-        for (int i = T.size() - 1; i >= 0; i--) {
-            MDoc.Layer L = T.get(i);
-            if (!L.vis || L.audio) continue;
-            MDoc.Pose ps = i == st.layer && !playing ? curPose() : MDoc.pose(L, f);
-            if (ps == null) continue;
-            int outline = L.out ? L.color : 0;
-            if (i != st.layer || playing) { Render.pose(c, ps, 0, outline, 1.5f * hair); continue; }
-            MDoc.Key k = ps.key;
-            int save = ps.alpha < 1 && outline == 0 ? c.saveLayerAlpha(null, Math.round(ps.alpha * 255)) : c.save();
-            c.concat(Render.matrix(ps, mtx));
-            Render.at(ps.frame - ps.keyFrame);
-            float lh = 1.5f * hair / poseScale(ps);
-            for (int j = 0; j < k.shapes.size(); j++) {
-                MDoc.Shape sh = k.shapes.get(j);
-                if (j == subIdx && subCopy != null) sh = subCopy;
-                boolean mv = moving && sel.contains(j);
-                if (erasing.contains(j)) { c.saveLayerAlpha(null, 0x40); Render.shape(c, sh, 0, outline, lh); c.restore(); continue; }
-                if (mv) { c.save(); c.translate(mdx, mdy); }
-                Render.shape(c, sh, 0, outline, lh);
-                if (mv) c.restore();
-            }
-            c.restoreToCount(save);
-        }
+        for (int i = T.size() - 1; i >= 0; i--) drawLayer(c, T, i, st, f, playing, hair);
 
-        if (!playing) {
-            // lo que se dibuja sobre la capa actual va en sus coordenadas (con su transformación)
-            MDoc.Pose cp = curPose();
-            c.save();
-            if (cp != null) { c.concat(Render.matrix(cp, mtx)); Render.at(cp.frame - cp.keyFrame); }
-            drawOverlay(c, d, st, hair / poseScale(cp));
-            c.restore();
-            if (st.tool == State.FREE) drawFreeBox(c, hair);
-        }
+        if (!playing) drawOverlayPart(c, d, st, hair);
         if (inSym) {
             // punto de registro del símbolo (su centro)
             p(Paint.Style.STROKE, Ui.INK, 1.5f * hair);
@@ -385,6 +382,126 @@ public final class StageView extends View {
     }
 
     private final Matrix mtx = new Matrix(), mtx2 = new Matrix(), inv = new Matrix(), invBase = new Matrix();
+
+    /** Una capa de la mesa; la actual (sin reproducir) con lo que se está moviendo, borrando o editando. */
+    private void drawLayer(Canvas c, List<MDoc.Layer> T, int i, State st, int f, boolean playing, float hair) {
+        MDoc.Layer L = T.get(i);
+        if (!L.vis || L.audio) return;
+        MDoc.Pose ps = i == st.layer && !playing ? curPose() : MDoc.pose(L, f);
+        if (ps == null) return;
+        int outline = L.out ? L.color : 0;
+        if (i != st.layer || playing) { Render.pose(c, ps, 0, outline, 1.5f * hair); return; }
+        MDoc.Key k = ps.key;
+        int save = ps.alpha < 1 && outline == 0 ? c.saveLayerAlpha(null, Math.round(ps.alpha * 255)) : c.save();
+        c.concat(Render.matrix(ps, mtx));
+        Render.at(ps.frame - ps.keyFrame);
+        float lh = 1.5f * hair / poseScale(ps);
+        for (int j = 0; j < k.shapes.size(); j++) {
+            MDoc.Shape sh = k.shapes.get(j);
+            if (j == subIdx && subCopy != null) sh = subCopy;
+            boolean mv = moving && sel.contains(j);
+            if (erasing.contains(j)) { c.saveLayerAlpha(null, 0x40); Render.shape(c, sh, 0, outline, lh); c.restore(); continue; }
+            if (mv) { c.save(); c.translate(mdx, mdy); }
+            Render.shape(c, sh, 0, outline, lh);
+            if (mv) c.restore();
+        }
+        c.restoreToCount(save);
+    }
+
+    /** Lo que va encima de la capa actual (trazo en curso, selección, nodos…), en sus coordenadas. */
+    private void drawOverlayPart(Canvas c, MDoc d, State st, float hair) {
+        MDoc.Pose cp = curPose();
+        c.save();
+        if (cp != null) { c.concat(Render.matrix(cp, mtx)); Render.at(cp.frame - cp.keyFrame); }
+        drawOverlay(c, d, st, hair / poseScale(cp));
+        c.restore();
+        if (st.tool == State.FREE) drawFreeBox(c, hair);
+    }
+
+    // ---------------------------------------------------------------- capas guardadas como imagen
+    /*
+     * Mientras se dibuja, lo de abajo (fondo, papel cebolla y capas de abajo), la capa actual y las capas de arriba
+     * se guardan en tres imágenes del tamaño de la pantalla. Cada cuadro solo pega esas imágenes y dibuja encima lo
+     * que se está haciendo con el dedo: con dibujos pesados o con efectos ya no se redibuja todo a cada movimiento.
+     * Se rehacen (120 ms después) cuando cambia el documento, el fotograma, la capa, el zoom o llega una imagen.
+     */
+    private android.graphics.Bitmap backBmp, curBmp, frontBmp;
+    private String cacheKey;
+
+    private String cacheKey(MDoc d, State st, int f) {
+        return d.version + "|" + f + "|" + st.layer + "|" + tx + "|" + ty + "|" + s + "|" + st.onion + "|"
+                + getWidth() + "x" + getHeight() + "|" + Images.gen + "|" + d.layers.size();
+    }
+
+    /** La capa actual se puede pegar como imagen si no se está moviendo, borrando ni transformando nada de ella. */
+    private boolean curCacheable(State st) {
+        return !moving && erasing.isEmpty() && subCopy == null && xfPose == null && st.tool != State.FREE;
+    }
+
+    private final Runnable cacheR = this::buildCache;
+
+    private void buildCache() {
+        MDoc d = host.doc();
+        State st = host.st();
+        if (host.playing() || st.inSymbol() || getWidth() <= 0 || getHeight() <= 0) return;
+        int f = host.shownFrame();
+        String key = cacheKey(d, st, f);
+        if (key.equals(cacheKey)) return;
+        int w = getWidth(), h = getHeight();
+        try {
+            backBmp = bmp(backBmp, w, h);
+            curBmp = bmp(curBmp, w, h);
+            frontBmp = bmp(frontBmp, w, h);
+        } catch (OutOfMemoryError e) { dropCache(); return; }
+        float hair = 1f / s;
+        Render.use(d);
+        List<MDoc.Layer> T = d.layers;
+        int cur = st.layer;
+        // abajo: fondo, sombra del escenario, escenario, papel cebolla y capas de abajo
+        Canvas c = new Canvas(backBmp);
+        c.drawColor(Ui.WORK);
+        c.translate(tx, ty);
+        c.scale(s, s);
+        for (int k = 1; k <= 3; k++)
+            c.drawRect(k * 2 * hair, k * 3 * hair, d.w + k * 2 * hair, d.h + k * 3 * hair, shadowP);
+        c.drawRect(0, 0, d.w, d.h, stageP);
+        if (st.onion) Render.onion(c, T, f, 2, hair);
+        for (int i = T.size() - 1; i > cur; i--) drawLayer(c, T, i, st, f, false, hair);
+        // la capa actual, tal como está guardada (sin nada moviéndose)
+        curBmp.eraseColor(0);
+        c = new Canvas(curBmp);
+        c.translate(tx, ty);
+        c.scale(s, s);
+        if (cur >= 0 && cur < T.size()) {
+            MDoc.Layer L = T.get(cur);
+            MDoc.Pose ps = L.vis && !L.audio ? MDoc.pose(L, f) : null;
+            if (ps != null) Render.pose(c, ps, 0, L.out ? L.color : 0, 1.5f * hair);
+        }
+        // arriba: las capas de encima
+        frontBmp.eraseColor(0);
+        c = new Canvas(frontBmp);
+        c.translate(tx, ty);
+        c.scale(s, s);
+        for (int i = Math.min(cur, T.size()) - 1; i >= 0; i--) drawLayer(c, T, i, st, f, false, hair);
+        cacheKey = key;
+        invalidate();
+    }
+
+    private static android.graphics.Bitmap bmp(android.graphics.Bitmap b, int w, int h) {
+        if (b != null && b.getWidth() == w && b.getHeight() == h) return b;
+        return android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888);
+    }
+
+    private void dropCache() {
+        removeCallbacks(cacheR);
+        backBmp = curBmp = frontBmp = null;
+        cacheKey = null;
+    }
+
+    @Override protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        dropCache();
+    }
 
     /** La instancia por la que se entró a editar el símbolo (null si se está en la escena o ya no existe). */
     private MDoc.Shape editInst() {
